@@ -1,0 +1,7 @@
+models/*.pt
+models/*.pkl
+data/
+.env
+__pycahce__/
+.ipynb_checkpoints/
+*.pyc
