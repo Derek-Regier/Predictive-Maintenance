@@ -1,7 +1,10 @@
 models/*.pt
 models/*.pkl
-data/
+
+# Adding a leading slash forces Git to only ignore the data folder at the root
+/data/
+
 .env
-__pycahce__/
+__pycache__/
 .ipynb_checkpoints/
 *.pyc
