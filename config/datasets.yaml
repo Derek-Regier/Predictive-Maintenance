@@ -1,0 +1,35 @@
+FD001:
+  n_clusters: 1
+  max_rul: 125
+  window_size: 30     
+  n_train_engines: 100
+  n_test_engines: 100
+  fault_modes: [fan]
+  single_condition: true
+
+FD002:
+  n_clusters: 6
+  max_rul: 125
+  window_size: 50     
+  n_train_engines: 260
+  n_test_engines: 259
+  fault_modes: [fan]
+  single_condition: false
+
+FD003:
+  n_clusters: 1
+  max_rul: 125
+  window_size: 30     
+  n_train_engines: 100
+  n_test_engines: 100
+  fault_modes: [HPC]
+  single_condition: true
+
+FD004:
+  n_clusters: 6
+  max_rul: 125
+  window_size: 50     
+  n_train_engines: 248
+  n_test_engines: 249
+  fault_modes: [HPC, fan]
+  single_condition: false

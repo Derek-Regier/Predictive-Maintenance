@@ -1,5 +1,6 @@
 models/*.pt
 models/*.pkl
+models/*/*.pkl
 
 # Adding a leading slash forces Git to only ignore the data folder at the root
 /data/
