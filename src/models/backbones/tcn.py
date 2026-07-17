@@ -1,44 +1,64 @@
 import torch
 import torch.nn as nn
 
+class Chomp1d(nn.Module):
+    """Slices off right-side padding to enforce causality after left-padded conv."""
+    def __init__(self, chomp_size: int):
+        super().__init__()
+        self.chomp_size = chomp_size
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x[:, :, :-self.chomp_size].contiguous()
+
+
+class TCNBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, dilation, dropout):
+        super().__init__()
+        padding = (kernel_size - 1) * dilation   # left-only padding amount
+        
+        self.net = nn.Sequential(
+            nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding, dilation=dilation),
+            Chomp1d(padding),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        
+        # 1×1 conv residual when channel dimensions change, identity otherwise
+        self.residual = (
+            nn.Conv1d(in_channels, out_channels, 1)
+            if in_channels != out_channels else nn.Identity()
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return nn.functional.relu(self.net(x) + self.residual(x))
+
+
 class TCNBackbone(nn.Module):
     def __init__(self, input_dim, num_channels, kernel_size=3, dropout=0.2, output_dim=1):
         super().__init__()
         layers = []
         num_levels = len(num_channels)
         
-        # Build residual blocks
+        # Build residual blocks sequentially
         for i in range(num_levels):
             dilation_size = 2 ** i
             in_channels = input_dim if i == 0 else num_channels[i-1]
             out_channels = num_channels[i]
             
-            # Causal padding ensures the model doesn't leak future information
-            padding = (kernel_size - 1) * dilation_size
-            
-            layers += [
-                nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding, dilation=dilation_size),
-                nn.Chopsuffix(padding) if hasattr(nn, 'Chopsuffix') else nn.Identity(), # Slice padding manually below
-                nn.ReLU(),
-                nn.Dropout(dropout)
-            ]
+            layers.append(
+                TCNBlock(in_channels, out_channels, kernel_size, dilation_size, dropout)
+            )
             
         self.tcn = nn.Sequential(*layers)
-        self.padding_to_slice = padding
         self.head = nn.Linear(num_channels[-1], output_dim)
 
     def encode(self, x):
         # Transpose to (batch, features, time_steps) for PyTorch Conv1d
-        x = x.transpose(1, 2)
+        x = x.transpose(1, 2)          # (batch, features, time)
+        out = self.tcn(x)               # (batch, channels, time)
         
-        # Run TCN and slice off the extra right-padding to maintain causality
-        out = self.tcn(x)
-        if self.padding_to_slice > 0:
-            out = out[:, :, :-self.padding_to_slice]
-            
-        # Global max pooling over the time dimension to get an embedding per sample
-        out = torch.max(out, dim=2)[0] 
-        return out
+        # Extract the last timestep since causality guarantees it holds the full sequence context
+        return out[:, :, -1]            # (batch, channels)
 
     def forward(self, x):
         return self.head(self.encode(x)).squeeze(-1)

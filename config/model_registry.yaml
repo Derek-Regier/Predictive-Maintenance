@@ -1,0 +1,128 @@
+FD001:
+  champion:
+    backbone: gru
+    meta_model: ngboost
+    backbone_config:
+      hidden_dim: 128
+      num_layers: 2
+      dropout: 0.28187347637974675
+      bidirectional: true
+      input_dim: 89
+      seq_length: 50
+    metrics:
+      val_rmse: 8.868654157784983
+      val_mae: 5.870340199160839
+      val_nll: 3.320084232853552
+      nasa_score: null
+      calibration:
+        coverage_50: 0.5091803278688525
+        coverage_80: 0.7649180327868852
+        coverage_90: 0.8459016393442623
+        coverage_95: 0.8852459016393442
+    artifacts:
+      backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\backbone.pt
+      meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\stacked_ngboost.pkl
+    trained_at: '2026-06-24'
+    optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD001_ngboost_v2.db
+    meta_model_config:
+      n_estimators: 700
+      learning_rate: 0.007449447152798581
+      max_depth: 2
+      min_samples_leaf: 18
+FD002:
+  champion:
+    backbone: tcn
+    meta_model: ngboost
+    backbone_config:
+      num_channels:
+      - 192
+      - 192
+      - 192
+      - 192
+      kernel_size: 5
+      dropout: 0.1867157238533433
+      input_dim: 125
+      seq_length: 40
+    metrics:
+      val_rmse: 11.521243488961982
+      val_mae: 7.948050125604282
+      val_nll: 3.7152236710019713
+      nasa_score: null
+      calibration:
+        coverage_50: 0.5006737718975867
+        coverage_80: 0.7707950508391522
+        coverage_90: 0.8509126546612765
+        coverage_95: 0.8999142472130344
+    artifacts:
+      backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\backbone.pt
+      meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\stacked_ngboost.pkl
+    trained_at: '2026-07-11'
+    optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD002_ngboost_v2.db
+    meta_model_config:
+      n_estimators: 800
+      learning_rate: 0.005914186132213735
+      max_depth: 2
+      min_samples_leaf: 2
+FD003:
+  champion:
+    backbone: gru
+    meta_model: ngboost
+    backbone_config:
+      hidden_dim: 192
+      num_layers: 2
+      dropout: 0.32140026538853983
+      bidirectional: true
+      input_dim: 95
+      seq_length: 50
+    metrics:
+      val_rmse: 8.722416949112962
+      val_mae: 5.373188562981583
+      val_nll: 3.308454830584156
+      nasa_score: null
+      calibration:
+        coverage_50: 0.6287960954446855
+        coverage_80: 0.8175162689804772
+        coverage_90: 0.8823210412147505
+        coverage_95: 0.9140455531453362
+    artifacts:
+      backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\backbone.pt
+      meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\stacked_ngboost.pkl
+    trained_at: '2026-07-13'
+    optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD003_ngboost_v2.db
+    meta_model_config:
+      n_estimators: 550
+      learning_rate: 0.006446288312997771
+      max_depth: 2
+      min_samples_leaf: 14
+FD004:
+  champion:
+    backbone: transformer
+    meta_model: ngboost
+    backbone_config:
+      d_model: 64
+      nhead: 4
+      num_layers: 1
+      dim_feedforward: 384
+      dropout: 0.33280566568751446
+      input_dim: 125
+      seq_length: 50
+    metrics:
+      val_rmse: 13.444100885553366
+      val_mae: 8.522147154009247
+      val_nll: 3.9679337983777865
+      nasa_score: null
+      calibration:
+        coverage_50: 0.6781499202551834
+        coverage_80: 0.8405103668261563
+        coverage_90: 0.8906964380648591
+        coverage_95: 0.9225943646996279
+    artifacts:
+      backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\backbone.pt
+      meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\stacked_ngboost.pkl
+    trained_at: '2026-07-15'
+    optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD004_ngboost_v2.db
+    meta_model_config:
+      n_estimators: 150
+      learning_rate: 0.012625434766038682
+      max_depth: 4
+      min_samples_leaf: 19

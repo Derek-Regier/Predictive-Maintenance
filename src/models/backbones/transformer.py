@@ -17,7 +17,7 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, :x.size(1)]
 
 class TransformerBackbone(nn.Module):
-    def __init__(self, input_dim, d_model, nhead, num_layers, dim_feedforward, output_dim=1):
+    def __init__(self, input_dim, d_model, nhead, dropout, num_layers, dim_feedforward, output_dim=1):
         super().__init__()
         # Project raw input features to the Transformer's internal d_model dimension
         self.embedding = nn.Linear(input_dim, d_model)
@@ -27,7 +27,10 @@ class TransformerBackbone(nn.Module):
             d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, batch_first=True
         )
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.head = nn.Linear(d_model, output_dim)
+        self.head = nn.Sequential(
+                nn.Dropout(dropout),
+                nn.Linear(d_model, output_dim)
+        )
 
     def encode(self, x):
         x = self.embedding(x)

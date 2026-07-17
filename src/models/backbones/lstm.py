@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class LSTMBackbone(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_layers, output_dim=1, bidirectional=False):
+    def __init__(self, input_dim, hidden_dim, num_layers, dropout, output_dim=1, bidirectional=False):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
@@ -19,7 +19,10 @@ class LSTMBackbone(nn.Module):
         
         # Account for bidirectional output doubling the hidden dimension size
         fc_input_dim = hidden_dim * 2 if bidirectional else hidden_dim
-        self.head = nn.Linear(fc_input_dim, output_dim)
+        self.head = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(fc_input_dim, output_dim)
+)
 
     def encode(self, x):
         """Returns (batch, hidden_dim) — used by the stacking layer."""
