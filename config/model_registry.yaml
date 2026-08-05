@@ -10,25 +10,40 @@ FD001:
       input_dim: 89
       seq_length: 50
     metrics:
-      val_rmse: 8.868654157784983
-      val_mae: 5.870340199160839
-      val_nll: 3.320084232853552
-      nasa_score: null
+      val_rmse: 9.304323863443127
+      val_mae: 6.214188971506502
+      val_nll: 3.383813289661188
+      nasa_score: 4427.721461557253
       calibration:
-        coverage_50: 0.5091803278688525
-        coverage_80: 0.7649180327868852
-        coverage_90: 0.8459016393442623
-        coverage_95: 0.8852459016393442
+        coverage_50: 0.4914754098360656
+        coverage_80: 0.7396721311475409
+        coverage_90: 0.8285245901639344
+        coverage_95: 0.8763934426229508
+      pi_width_90: 19.377641202995925
+      within_5_cycles: 0.5898360655737704
+      within_10_cycles: 0.8039344262295082
+      within_15_cycles: 0.8960655737704918
+      auc_failure_20: 0.9990056603773585
+      auc_failure_50: 0.9978948780487805
     artifacts:
       backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\backbone.pt
       meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\stacked_ngboost.pkl
-    trained_at: '2026-06-24'
+    trained_at: '2026-07-27'
     optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD001_ngboost_v2.db
     meta_model_config:
       n_estimators: 700
       learning_rate: 0.007449447152798581
       max_depth: 2
       min_samples_leaf: 18
+    backbone_retrain:
+      epochs: 150
+      patience: 15
+      lr: 0.001
+      best_val_rmse: 9.321814877210365
+    calibration_scale: 1.3045879955244222
+    calibration_alpha: 0.9
+    calibration_pre_coverage: 0.8285245901639344
+    calibrated_at: '2026-08-05'
 FD002:
   champion:
     backbone: tcn
@@ -44,25 +59,40 @@ FD002:
       input_dim: 125
       seq_length: 40
     metrics:
-      val_rmse: 11.521243488961982
-      val_mae: 7.948050125604282
-      val_nll: 3.7152236710019713
-      nasa_score: null
+      val_rmse: 11.896546213074814
+      val_mae: 8.414963111566815
+      val_nll: 3.6824245172886507
+      nasa_score: 22710.31606040089
       calibration:
-        coverage_50: 0.5006737718975867
-        coverage_80: 0.7707950508391522
-        coverage_90: 0.8509126546612765
-        coverage_95: 0.8999142472130344
+        coverage_50: 0.4858507901506799
+        coverage_80: 0.7720200906529462
+        coverage_90: 0.863163052799216
+        coverage_95: 0.9153497488668382
+      pi_width_90: 29.763318767517077
+      within_5_cycles: 0.4780105353423986
+      within_10_cycles: 0.699987749601862
+      within_15_cycles: 0.8238392747764303
+      auc_failure_20: 0.9978221957040573
+      auc_failure_50: 0.9927625520264384
     artifacts:
       backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\backbone.pt
       meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\stacked_ngboost.pkl
-    trained_at: '2026-07-11'
+    trained_at: '2026-07-27'
     optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD002_ngboost_v2.db
     meta_model_config:
-      n_estimators: 800
-      learning_rate: 0.005914186132213735
+      n_estimators: 400
+      learning_rate: 0.011779349140338543
       max_depth: 2
-      min_samples_leaf: 2
+      min_samples_leaf: 8
+    backbone_retrain:
+      epochs: 150
+      patience: 15
+      lr: 0.001
+      best_val_rmse: 11.665516460576967
+    calibration_scale: 1.124465511547458
+    calibration_alpha: 0.9
+    calibration_pre_coverage: 0.863163052799216
+    calibrated_at: '2026-08-05'
 FD003:
   champion:
     backbone: gru
@@ -75,25 +105,40 @@ FD003:
       input_dim: 95
       seq_length: 50
     metrics:
-      val_rmse: 8.722416949112962
-      val_mae: 5.373188562981583
-      val_nll: 3.308454830584156
-      nasa_score: null
+      val_rmse: 9.134832384941895
+      val_mae: 5.8336056076758664
+      val_nll: 3.408732892583284
+      nasa_score: 5090.569171210635
       calibration:
-        coverage_50: 0.6287960954446855
-        coverage_80: 0.8175162689804772
-        coverage_90: 0.8823210412147505
-        coverage_95: 0.9140455531453362
+        coverage_50: 0.5976138828633406
+        coverage_80: 0.8337852494577006
+        coverage_90: 0.8915401301518439
+        coverage_95: 0.9243492407809111
+      pi_width_90: 22.363973483652874
+      within_5_cycles: 0.6182212581344902
+      within_10_cycles: 0.8107375271149675
+      within_15_cycles: 0.9037418655097614
+      auc_failure_20: 0.9990541362530414
+      auc_failure_50: 0.9983982514880952
     artifacts:
       backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\backbone.pt
       meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\stacked_ngboost.pkl
-    trained_at: '2026-07-13'
+    trained_at: '2026-08-03'
     optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD003_ngboost_v2.db
     meta_model_config:
       n_estimators: 550
       learning_rate: 0.006446288312997771
       max_depth: 2
       min_samples_leaf: 14
+    backbone_retrain:
+      epochs: 150
+      patience: 15
+      lr: 0.001
+      best_val_rmse: 8.999547311206305
+    calibration_scale: 1.0536670291928583
+    calibration_alpha: 0.9
+    calibration_pre_coverage: 0.8915401301518439
+    calibrated_at: '2026-08-05'
 FD004:
   champion:
     backbone: transformer
@@ -107,22 +152,37 @@ FD004:
       input_dim: 125
       seq_length: 50
     metrics:
-      val_rmse: 13.444100885553366
-      val_mae: 8.522147154009247
-      val_nll: 3.9679337983777865
-      nasa_score: null
+      val_rmse: 15.19927786515119
+      val_mae: 9.578968793767524
+      val_nll: 4.12785731021983
+      nasa_score: 392879.83806333615
       calibration:
-        coverage_50: 0.6781499202551834
-        coverage_80: 0.8405103668261563
-        coverage_90: 0.8906964380648591
-        coverage_95: 0.9225943646996279
+        coverage_50: 0.6750664540138225
+        coverage_80: 0.8316852737905369
+        coverage_90: 0.8825093035619351
+        coverage_95: 0.9162147793726741
+      pi_width_90: 41.693069725585055
+      within_5_cycles: 0.47644869750132907
+      within_10_cycles: 0.7029239766081872
+      within_15_cycles: 0.8063795853269538
+      auc_failure_20: 0.9859286139202855
+      auc_failure_50: 0.9762790441708905
     artifacts:
       backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\backbone.pt
       meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\stacked_ngboost.pkl
-    trained_at: '2026-07-15'
+    trained_at: '2026-08-03'
     optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD004_ngboost_v2.db
     meta_model_config:
       n_estimators: 150
       learning_rate: 0.012625434766038682
       max_depth: 4
       min_samples_leaf: 19
+    backbone_retrain:
+      epochs: 150
+      patience: 15
+      lr: 0.001
+      best_val_rmse: 15.198938653934185
+    calibration_scale: 1.0923271405484827
+    calibration_alpha: 0.9
+    calibration_pre_coverage: 0.8825093035619351
+    calibrated_at: '2026-08-05'
