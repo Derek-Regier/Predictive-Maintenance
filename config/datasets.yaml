@@ -6,6 +6,10 @@ FD001:
   n_test_engines: 100
   fault_modes: [fan]
   single_condition: true
+  alert_thresholds:
+    critical_prob_20: 0.90
+    warning_prob_50: 0.75
+    monitor_prob_50: 0.50
 
 FD002:
   n_clusters: 6
@@ -15,6 +19,10 @@ FD002:
   n_test_engines: 259
   fault_modes: [fan]
   single_condition: false
+  alert_thresholds:
+    critical_prob_20: 0.90
+    warning_prob_50: 0.75
+    monitor_prob_50: 0.50
 
 FD003:
   n_clusters: 1
@@ -24,6 +32,10 @@ FD003:
   n_test_engines: 100
   fault_modes: [HPC]
   single_condition: true
+  alert_thresholds:
+    critical_prob_20: 0.90
+    warning_prob_50: 0.75
+    monitor_prob_50: 0.50
 
 FD004:
   n_clusters: 6
@@ -33,3 +45,7 @@ FD004:
   n_test_engines: 249
   fault_modes: [HPC, fan]
   single_condition: false
+  alert_thresholds:
+    critical_prob_20: 0.60
+    warning_prob_50: 0.65
+    monitor_prob_50: 0.40
