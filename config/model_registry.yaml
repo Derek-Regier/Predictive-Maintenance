@@ -44,6 +44,23 @@ FD001:
     calibration_alpha: 0.9
     calibration_pre_coverage: 0.8285245901639344
     calibrated_at: '2026-08-05'
+  vae:
+    trained_at: '2026-08-08'
+    best_val_loss: 0.1364863405486087
+    config:
+      input_dim: 89
+      hidden_dim: 64
+      latent_dim: 16
+      seq_length: 50
+      num_layers: 1
+      dropout: 0.0
+    healthy_rul_threshold: 80
+    n_clusters: 1
+    artifacts:
+      vae: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae.pt
+      config: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae_config.pkl
+      reference: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae_healthy_reference.pkl
+      thresholds: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae_drift_thresholds.pkl
 FD002:
   champion:
     backbone: tcn
@@ -93,6 +110,23 @@ FD002:
     calibration_alpha: 0.9
     calibration_pre_coverage: 0.863163052799216
     calibrated_at: '2026-08-05'
+  vae:
+    trained_at: '2026-08-08'
+    best_val_loss: 3.5188784733871
+    config:
+      input_dim: 125
+      hidden_dim: 64
+      latent_dim: 32
+      seq_length: 40
+      num_layers: 1
+      dropout: 0.0
+    healthy_rul_threshold: 80
+    n_clusters: 6
+    artifacts:
+      vae: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae.pt
+      config: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae_config.pkl
+      reference: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae_healthy_reference.pkl
+      thresholds: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae_drift_thresholds.pkl
 FD003:
   champion:
     backbone: gru
@@ -139,6 +173,23 @@ FD003:
     calibration_alpha: 0.9
     calibration_pre_coverage: 0.8915401301518439
     calibrated_at: '2026-08-05'
+  vae:
+    trained_at: '2026-08-08'
+    best_val_loss: 0.12896475475461616
+    config:
+      input_dim: 95
+      hidden_dim: 64
+      latent_dim: 16
+      seq_length: 50
+      num_layers: 1
+      dropout: 0.0
+    healthy_rul_threshold: 80
+    n_clusters: 1
+    artifacts:
+      vae: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae.pt
+      config: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae_config.pkl
+      reference: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae_healthy_reference.pkl
+      thresholds: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae_drift_thresholds.pkl
 FD004:
   champion:
     backbone: transformer
@@ -186,3 +237,20 @@ FD004:
     calibration_alpha: 0.9
     calibration_pre_coverage: 0.8825093035619351
     calibrated_at: '2026-08-05'
+  vae:
+    trained_at: '2026-08-08'
+    best_val_loss: 3.4632007482783664
+    config:
+      input_dim: 125
+      hidden_dim: 64
+      latent_dim: 32
+      seq_length: 50
+      num_layers: 1
+      dropout: 0.0
+    healthy_rul_threshold: 80
+    n_clusters: 6
+    artifacts:
+      vae: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae.pt
+      config: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae_config.pkl
+      reference: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae_healthy_reference.pkl
+      thresholds: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae_drift_thresholds.pkl
