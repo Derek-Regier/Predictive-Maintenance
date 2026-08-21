@@ -12,23 +12,22 @@ HOW TO EDIT
 - Hex colours: any colour picker (e.g. coolors.co, htmlcolorcodes.com)
   gives you the #RRGGBB code to paste in.
 - CHART_HEIGHT: pixels tall each chart is. 400 is a good default.
-- FONT_FAMILY: any Google Font name, or "Arial", "Helvetica", etc.
+- FONT_FAMILY: any system font name — "Arial", "Helvetica", etc.
 - CSS block at the bottom: standard web CSS — controls card borders,
   padding, hover effects. Each section is labelled.
+- Signature: edit SIGNATURE_TEXT, SIGNATURE_COLOR, or SIGNATURE_SIZE.
+  Font is now Inter bold (same as the rest of the dashboard).
 """
 
 # ── Alert tier colours ────────────────────────────────────────────────────────
-# Used in charts, badges, KPI cards, and the fleet table.
-# Change these to adjust the entire dashboard's alert colour scheme.
 
 ALERT_COLORS = {
-    "CRITICAL": "#DC2626",   # red   — failure likely within 20 cycles
-    "WARNING":  "#D97706",   # amber — schedule maintenance within 50 cycles
-    "MONITOR":  "#2563EB",   # blue  — flag for next inspection
-    "NOMINAL":  "#16A34A",   # green — no action required
+    "CRITICAL": "#DC2626",
+    "WARNING":  "#D97706",
+    "MONITOR":  "#2563EB",
+    "NOMINAL":  "#16A34A",
 }
 
-# Lighter background versions used for table row tinting and card fills
 ALERT_BG_COLORS = {
     "CRITICAL": "#FEE2E2",
     "WARNING":  "#FEF3C7",
@@ -36,7 +35,6 @@ ALERT_BG_COLORS = {
     "NOMINAL":  "#D1FAE5",
 }
 
-# Emoji prefixes for alert tiers — shown in the fleet table's Alert column
 ALERT_EMOJI = {
     "CRITICAL": "🔴 CRITICAL",
     "WARNING":  "🟡 WARNING",
@@ -45,24 +43,21 @@ ALERT_EMOJI = {
 }
 
 # ── Dataset colours ───────────────────────────────────────────────────────────
-# One colour per dataset — used in multi-dataset comparison charts so each
-# dataset is consistently represented across all pages.
 
 DATASET_COLORS = {
-    "FD001": "#6366F1",   
-    "FD002": "#10B981",   
-    "FD003": "#F59E0B",   
-    "FD004": "#EF4444",   
+    "FD001": "#6366F1",
+    "FD002": "#10B981",
+    "FD003": "#F59E0B",
+    "FD004": "#EF4444",
 }
 
 # ── Health index colours ──────────────────────────────────────────────────────
-# Used on the health monitor page for the VAE metric trajectories.
 
 HEALTH_COLORS = {
-    "recon_error": "#EF4444",   # reconstruction error — primary signal
-    "kl_div":      "#8B5CF6",   # KL divergence
-    "js_div":      "#06B6D4",   # Jensen-Shannon divergence
-    "wasserstein": "#F97316",   # Wasserstein distance
+    "recon_error": "#EF4444",
+    "kl_div":      "#8B5CF6",
+    "js_div":      "#06B6D4",
+    "wasserstein": "#F97316",
 }
 
 HEALTH_LABELS = {
@@ -73,59 +68,69 @@ HEALTH_LABELS = {
 }
 
 # ── Chart sizing ──────────────────────────────────────────────────────────────
-# All charts use use_container_width=True so they fill the column they're in.
-# These heights control how tall each chart is in pixels.
 
-CHART_HEIGHT         = 420   # standard chart height
-CHART_HEIGHT_TALL    = 550   # taller charts
-CHART_HEIGHT_COMPACT = 300   # compact charts 
+CHART_HEIGHT         = 420
+CHART_HEIGHT_TALL    = 550
+CHART_HEIGHT_COMPACT = 300
 
 # ── Typography ────────────────────────────────────────────────────────────────
-# FONT_FAMILY now drives BOTH the Plotly charts (via CHART_THEME below) and the
-# Streamlit page text (via CUSTOM_CSS below) — change it in one place.
+# FONT_FAMILY drives both Plotly charts (via CHART_THEME) and Streamlit page
+# text (via CUSTOM_CSS). Change it in one place and it applies everywhere.
 #
 # To use a different Google Font:
-#   1. Go to fonts.google.com, pick a font, click it, copy the "@import" line
-#      it gives you under the "Use on the web" tab.
-#   2. Paste that url(...) into GOOGLE_FONT_IMPORT below, replacing the existing one.
-#   3. Set FONT_FAMILY to that font's name, followed by the same fallback stack.
+#   1. Go to fonts.google.com, pick a font, copy the @import URL.
+#   2. Paste it into GOOGLE_FONT_IMPORT below.
+#   3. Set FONT_FAMILY to that font's name + the same fallback stack.
 
-GOOGLE_FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-FONT_FAMILY = "Inter, -apple-system, sans-serif"
-FONT_SIZE   = 12   # base chart font size in pt
+GOOGLE_FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+FONT_FAMILY        = "Inter, -apple-system, sans-serif"
+FONT_SIZE          = 12
 
 # ── Signature ─────────────────────────────────────────────────────────────────
-# Small initials shown in a fixed corner of every page, in a decorative font.
-# Purely cosmetic — safe to edit any value below without breaking anything.
+# Small initials shown in a fixed corner of every page.
+# Font is now Inter bold (non-cursive) — same as the dashboard body font
+# but at weight 800 so it reads as a distinct mark without being decorative.
+# SIGNATURE_IMPORT is no longer needed (no external font) but kept as an
+# empty string so any code that references it doesn't break.
 
-SIGNATURE_TEXT   = "DLR"                # your initials — swap for whatever you like
-SIGNATURE_FONT   = "'Pinyon Script', cursive"   # a cursive/script Google Font
-SIGNATURE_IMPORT = "https://fonts.googleapis.com/css2?family=Pinyon+Script&display=swap"
-SIGNATURE_COLOR  = "#9CA3AF"           # muted grey so it doesn't compete for attention
-SIGNATURE_SIZE   = "1.6rem"
-SIGNATURE_CORNER = {                   # pick ONE pair: (top or bottom) + (left or right)
+SIGNATURE_TEXT   = "DR."
+SIGNATURE_FONT   = "Inter, -apple-system, sans-serif"   # non-cursive, matches dashboard
+SIGNATURE_WEIGHT = "800"                                 # extra-bold
+SIGNATURE_IMPORT = ""                                    # no external font needed
+SIGNATURE_COLOR  = "#9CA3AF"
+SIGNATURE_SIZE   = "1.0rem"                              # slightly smaller than cursive
+SIGNATURE_CORNER = {
     "bottom": "14px",
     "right":  "22px",
 }
 
+# ── Header bar ────────────────────────────────────────────────────────────────
+# Persistent top bar shown on every page. Edit the text in HEADER_HTML below.
+# Colours are set in the CSS section (.pm-header-bar).
+
+HEADER_BG_COLOR       = "#0F172A"   # dark navy bar — change for a different colour
+HEADER_TITLE_COLOR    = "#F8FAFC"
+HEADER_SUBTITLE_COLOR = "#94A3B8"
+NATIVE_HEADER_HEIGHT  = "3.75rem"   # Streamlit's own built-in header height (60px)
+
 # ── Chart theme ───────────────────────────────────────────────────────────────
-# Applied to every Plotly figure via fig.update_layout(**CHART_THEME).
 
 CHART_THEME = {
-    "font":         {"family": FONT_FAMILY, "size": FONT_SIZE, "color": "#374151"},
-    "paper_bgcolor": "rgba(0,0,0,0)",   # transparent — inherits page background
+    "font":          {"family": FONT_FAMILY, "size": FONT_SIZE, "color": "#374151"},
+    "paper_bgcolor": "rgba(0,0,0,0)",
     "plot_bgcolor":  "rgba(0,0,0,0)",
-    "margin":       {"t": 50, "b": 40, "l": 50, "r": 20},
-    "legend":       {"bgcolor": "rgba(0,0,0,0)", "borderwidth": 0},
-    "xaxis":        {"gridcolor": "#F3F4F6", "linecolor": "#E5E7EB", "zeroline": False},
-    "yaxis":        {"gridcolor": "#F3F4F6", "linecolor": "#E5E7EB", "zeroline": False},
+    "margin":        {"t": 50, "b": 40, "l": 50, "r": 20},
+    "legend":        {"bgcolor": "rgba(0,0,0,0)", "borderwidth": 0},
+    "xaxis":         {"gridcolor": "#F3F4F6", "linecolor": "#E5E7EB", "zeroline": False},
+    "yaxis":         {"gridcolor": "#F3F4F6", "linecolor": "#E5E7EB", "zeroline": False},
 }
 
 # ── CSS injected into every page ──────────────────────────────────────────────
-# Loaded on every page via st.markdown(CUSTOM_CSS, unsafe_allow_html=True).
-# Edit this block to change the look of cards, the sidebar, metric widgets, etc.
-# It's an f-string so the variables above (fonts, signature) can be dropped in —
-# if you're not touching those, everything below is plain CSS.
+# Loaded on every page via:
+#     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+# It's an f-string so the Python variables above are inserted automatically.
+# Only the CSS rules change here — SIGNATURE_HTML and HEADER_HTML (below)
+# render the actual HTML elements.
 
 _corner_css = "; ".join(f"{side}: {value}" for side, value in SIGNATURE_CORNER.items())
 
@@ -134,39 +139,79 @@ CUSTOM_CSS = f"""
 
 /* ── Fonts ── */
 @import url('{GOOGLE_FONT_IMPORT}');
-@import url('{SIGNATURE_IMPORT}');
+/* Note: no second @import needed — signature now uses Inter like the rest */
 
 /* ── Page background ── */
 [data-testid="stAppViewContainer"] {{
-    background-color: #FAFAFA;   /* change this hex to recolour the whole page */
+    background-color: #FAFAFA;
 }}
 
-/* ── Apply FONT_FAMILY to Streamlit's own text, not just charts ── */
+/* ── Apply FONT_FAMILY to all Streamlit text ── */
 html, body, [class*="css"] {{
     font-family: {FONT_FAMILY};
 }}
 
 /* ── General page ── */
+/* padding-top leaves room for Streamlit's native header (3.75rem)
+   plus our fixed custom header bar (~2.85rem) stacked below it. */
 .main .block-container {{
-    padding-top: 1.5rem;
+    padding-top: 7.5rem;
     padding-bottom: 2rem;
 }}
 
-/* ── Signature — fixed initials in a page corner ── */
+/* ── Persistent top header bar ── */
+/* Positioned just below Streamlit's own native header bar (which is
+   fixed, opaque white, and sits at z-index: 999990 — a plain z-index
+   bump here would still get painted over by it). NATIVE_HEADER_HEIGHT
+   below is Streamlit's own header height; keep the two in sync if a
+   future Streamlit version changes it. */
+.pm-header-bar {{
+    position: fixed;
+    top: {NATIVE_HEADER_HEIGHT};
+    left: 0;
+    right: 0;
+    z-index: 999991;
+    background: {HEADER_BG_COLOR};
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.25);
+}}
+.pm-header-title {{
+    font-family: {FONT_FAMILY};
+    font-weight: 700;
+    font-size: 1.0rem;
+    letter-spacing: 0.01em;
+    color: {HEADER_TITLE_COLOR};
+}}
+.pm-header-subtitle {{
+    font-family: {FONT_FAMILY};
+    font-weight: 400;
+    font-size: 0.78rem;
+    letter-spacing: 0.03em;
+    color: {HEADER_SUBTITLE_COLOR};
+}}
+
+/* ── Signature — fixed corner ── */
+/* Uses Inter bold (same as dashboard body font) instead of cursive.
+   font-weight: 800 (extra-bold) makes it read as a mark without
+   being decorative. pointer-events: none means it never blocks clicks. */
 .dashboard-signature {{
     position: fixed;
     {_corner_css};
     font-family: {SIGNATURE_FONT};
+    font-weight: {SIGNATURE_WEIGHT};
     font-size: {SIGNATURE_SIZE};
     color: {SIGNATURE_COLOR};
-    opacity: 0.8;
+    letter-spacing: 0.15em;
+    opacity: 0.85;
     z-index: 9999;
-    pointer-events: none;   /* clicks pass through it — never blocks the UI */
+    pointer-events: none;
     user-select: none;
 }}
 
 /* ── KPI metric cards ── */
-/* Streamlit's [data-testid="metric-container"] targets st.metric() blocks */
 [data-testid="metric-container"] {{
     background-color: #F9FAFB;
     border: 1px solid #E5E7EB;
@@ -219,8 +264,24 @@ hr {{
 </style>
 """
 
-# ── Signature HTML snippet ──────────────────────────────────────────────────
-# Actually renders the initials. Import + inject this alongside CUSTOM_CSS —
-# see the usage note in app.py / each page file.
+# ── HTML snippets — imported and rendered by each page ───────────────────────
+# Each page should inject both of these alongside CUSTOM_CSS.
+# Typical usage at the top of every page file:
+#
+#     from utils.styles import CUSTOM_CSS, SIGNATURE_HTML, HEADER_HTML
+#     st.markdown(CUSTOM_CSS + HEADER_HTML + SIGNATURE_HTML, unsafe_allow_html=True)
+#
+# HEADER_HTML — the persistent top title bar
+# Edit the text between the span tags to rename the project or subtitle.
+
+HEADER_HTML = f"""
+<div class="pm-header-bar">
+    <span class="pm-header-title"> Predictive Maintenance Dashboard</span>
+    <span class="pm-header-subtitle">NASA CMAPSS Turbofan Engine Dataset</span>
+</div>
+"""
+
+# SIGNATURE_HTML — the initials mark in the page corner
+# Edit SIGNATURE_TEXT above to change the initials.
 
 SIGNATURE_HTML = f'<div class="dashboard-signature">{SIGNATURE_TEXT}</div>'

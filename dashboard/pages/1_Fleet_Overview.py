@@ -40,7 +40,7 @@ from utils.data_loader import (
     DATASETS,
 )
 from utils.charts import build_alert_donut, build_cross_dataset_risk_bar
-from utils.styles import ALERT_COLORS, CUSTOM_CSS, SIGNATURE_HTML
+from utils.styles import ALERT_COLORS, CUSTOM_CSS, HEADER_HTML, SIGNATURE_HTML
 
 # ── Page config + CSS ─────────────────────────────────────────────────────────
 # Each page needs its own set_page_config call. layout="wide" is required
@@ -53,6 +53,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown(HEADER_HTML, unsafe_allow_html=True)
 st.markdown(SIGNATURE_HTML, unsafe_allow_html=True)
 
 

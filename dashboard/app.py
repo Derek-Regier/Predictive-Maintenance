@@ -44,7 +44,7 @@ _DASHBOARD = Path(__file__).resolve().parent
 if str(_DASHBOARD) not in sys.path:
     sys.path.insert(0, str(_DASHBOARD))
 
-from utils.styles import CUSTOM_CSS, SIGNATURE_HTML
+from utils.styles import CUSTOM_CSS, HEADER_HTML, SIGNATURE_HTML
 
 # ── Page configuration ────────────────────────────────────────────────────────
 # Must be called before any other st. function.
@@ -71,6 +71,7 @@ st.set_page_config(
 # edit it without touching this file.
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown(HEADER_HTML, unsafe_allow_html=True)
 st.markdown(SIGNATURE_HTML, unsafe_allow_html=True)
 
 # ── Redirect to landing page ──────────────────────────────────────────────────

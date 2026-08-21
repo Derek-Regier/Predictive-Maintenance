@@ -35,7 +35,7 @@ from utils.charts import (
     build_latent_norm_vs_rul,
     build_drift_engine_bar,
 )
-from utils.styles import CUSTOM_CSS, SIGNATURE_HTML
+from utils.styles import CUSTOM_CSS, HEADER_HTML, SIGNATURE_HTML
 
 st.set_page_config(
     page_title="Health Monitor — Predictive Maintenance",
@@ -44,6 +44,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown(HEADER_HTML, unsafe_allow_html=True)
 st.markdown(SIGNATURE_HTML, unsafe_allow_html=True)
 
 

@@ -514,28 +514,33 @@ def build_bucket_rmse_chart(all_bucket: dict[str, pd.DataFrame]) -> go.Figure:
     return _apply_theme(fig, height=CHART_HEIGHT)
 
 
+ 
 def build_within_n_chart(all_metrics: dict[str, dict]) -> go.Figure:
     """
     Grouped bar chart of within-N-cycles accuracy for each dataset.
-    Three groups: within 5 cycles, within 10 cycles, within 15 cycles.
-
-    Operationally: within_10 is the most meaningful — it answers
-    "what fraction of predictions are within one maintenance window?"
+    Keys match what evaluate.py writes to metrics_summary.json:
+      all_seq.within_5_pct, all_seq.within_10_pct, all_seq.within_15_pct
     """
-    groups   = ["within_5_cycles", "within_10_cycles", "within_15_cycles"]
-    labels   = ["Within ±5 cycles", "Within ±10 cycles", "Within ±15 cycles"]
-    fig = go.Figure()
-
+    # These keys match the actual JSON structure from evaluate.py
+    groups = ["within_5_pct", "within_10_pct", "within_15_pct"]
+    labels = ["Within ±5 cycles", "Within ±10 cycles", "Within ±15 cycles"]
+    fig    = go.Figure()
+ 
     for ds, m in all_metrics.items():
         all_seq = m.get("all_seq", {})
-        vals = [all_seq.get(g, 0) * 100 for g in groups]   # convert to %
+        vals    = [all_seq.get(g, 0) * 100 for g in groups]  # to %
+ 
+        # Skip datasets where all values are zero (data not loaded yet)
+        if all(v == 0 for v in vals):
+            continue
+ 
         fig.add_trace(go.Bar(
             x=labels, y=vals,
             name=ds,
             marker_color=DATASET_COLORS.get(ds, "#9CA3AF"),
             hovertemplate=f"{ds}: %{{y:.1f}}%<extra></extra>",
         ))
-
+ 
     fig.update_layout(
         barmode="group",
         xaxis_title="",
@@ -544,6 +549,7 @@ def build_within_n_chart(all_metrics: dict[str, dict]) -> go.Figure:
         title="Prediction accuracy within N cycles (higher = better)",
     )
     return _apply_theme(fig, height=CHART_HEIGHT)
+
 
 
 def build_auc_comparison(all_metrics: dict[str, dict]) -> go.Figure:

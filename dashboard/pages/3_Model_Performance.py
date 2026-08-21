@@ -36,7 +36,7 @@ from utils.charts import (
     build_within_n_chart,
     build_auc_comparison,
 )
-from utils.styles import DATASET_COLORS, CUSTOM_CSS, SIGNATURE_HTML
+from utils.styles import DATASET_COLORS, CUSTOM_CSS, HEADER_HTML, SIGNATURE_HTML
 
 st.set_page_config(
     page_title="Model Performance — Predictive Maintenance",
@@ -45,6 +45,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown(HEADER_HTML, unsafe_allow_html=True)
 st.markdown(SIGNATURE_HTML, unsafe_allow_html=True)
 
 with st.sidebar:
