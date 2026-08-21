@@ -21,24 +21,21 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import shutil
-from pathlib import Path
 import sys
-import yaml
+from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
+import optuna
+import torch
+from ngboost import NGBRegressor
 from scipy.optimize import brentq
 from scipy.stats import norm
-from sklearn.metrics import mean_squared_error, mean_absolute_error, roc_auc_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, roc_auc_score
 from sklearn.tree import DecisionTreeRegressor
-import torch
-import optuna
-from ngboost import NGBRegressor
 
-# ── Path resolution ───────────────────────────────────────────────────────────
-_ROOT     = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[2]
 _TRAINING = _ROOT / "src" / "training"
 if str(_TRAINING) not in sys.path:
     sys.path.insert(0, str(_TRAINING))
@@ -46,190 +43,94 @@ if str(_TRAINING) not in sys.path:
 from shared import (
     DEVICE,
     build_backbone,
-    make_loader,
-    split_by_engine,
-    get_backbone_features,
     create_sequences,
+    get_backbone_features,
+    load_registry,
+    make_loader,
+    save_registry,
+    split_by_engine,
     train_backbone,
 )
 
 
-# ── Serialisation helpers ─────────────────────────────────────────────────────
-
-def _to_python(obj):
-    """
-    Recursively convert numpy scalars/arrays to native Python types.
-    yaml.safe_dump cannot serialise np.float64 or np.int64.
-    """
-    if isinstance(obj, dict):
-        return {k: _to_python(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_to_python(v) for v in obj]
-    if isinstance(obj, np.integer):
-        return int(obj)
-    if isinstance(obj, np.floating):
-        return float(obj)
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    return obj
-
-
-def _safe_yaml_write(path: Path, data: dict) -> None:
-    """
-    Write YAML atomically via a .tmp sibling file.
-    If yaml.safe_dump fails the original file is never touched.
-    """
-    tmp = path.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        yaml.safe_dump(_to_python(data), f,
-                       default_flow_style=False, sort_keys=False)
-    shutil.move(str(tmp), str(path))
-
-
 # ── Sigma calibration ─────────────────────────────────────────────────────────
 
-def _coverage_error(
-    s:      float,
-    y_true: np.ndarray,
-    mu:     np.ndarray,
-    sigma:  np.ndarray,
-    alpha:  float,
-) -> float:
+def _coverage_error(s: float, y_true: np.ndarray, mu: np.ndarray, sigma: np.ndarray, alpha: float) -> float:
     """
-    Returns (actual coverage at scale s) - alpha.
-
-    Zero when the scale factor s produces exactly alpha coverage.
-    Used as the objective for brentq root-finding.
-
-    How it works
-    ------------
-    A Normal prediction interval at confidence alpha is:
-        [mu - z*s*sigma,  mu + z*s*sigma]
-    where z = norm.ppf((1 + alpha) / 2).
-
-    When s=1 the interval is what NGBoost predicted.
-    When s>1 the interval widens  (fixes underconfidence → coverage too low).
-    When s<1 the interval narrows (fixes overconfidence  → coverage too high).
-
-    brentq searches for the s where this function equals zero.
+    (actual coverage of the [mu ± z*s*sigma] interval at scale s) - alpha.
+    Zero when s produces exactly `alpha` coverage — this is the root
+    brentq searches for. s>1 widens the interval, s<1 narrows it.
     """
-    z       = norm.ppf((1 + alpha) / 2)
+    z = norm.ppf((1 + alpha) / 2)
     in_band = (y_true >= mu - z * s * sigma) & (y_true <= mu + z * s * sigma)
     return float(in_band.mean()) - alpha
 
 
-def calibrate_sigma(
-    dataset_key:   str,
-    registry_path: Path,
-    alpha:         float = 0.90,
-) -> float:
+def calibrate_sigma(dataset_key: str, registry_path: Path, alpha: float = 0.90) -> float:
     """
-    Load the trained model for `dataset_key`, run inference on the val set,
-    and find the sigma scale factor that brings `alpha` coverage to exactly
-    `alpha` using brentq root-finding (equivalent to conformal calibration).
+    Find the sigma scale factor that brings NGBoost's predicted `alpha`
+    coverage on the val set to exactly `alpha` (brentq root-finding —
+    equivalent to conformal calibration). Saves the scale to the registry.
 
-    Saves `calibration_scale` to the registry and returns the scale value.
+    Uses the val set (not the test set) so the test set stays a true
+    holdout; split_by_engine's fixed random_state=42 reproduces the same
+    val engines that were excluded during training.
 
-    Why the val set?
-    ----------------
-    The val set is the 20% of training engines held out during backbone and
-    NGBoost training. Using it here keeps the test set completely untouched
-    as a true holdout. The same random_state=42 in split_by_engine guarantees
-    we get exactly the same val engines that were excluded during training.
-
-    Why alpha=0.90?
-    ---------------
-    The 90% prediction interval is the one used for operational decisions in
-    alert_tier() and predictor.py. Calibrating at 90% means P(RUL < N) values
-    used for CRITICAL/WARNING alerts are computed from a correctly-scaled sigma.
+    alpha=0.90 because that's the interval alert_tier() and predictor.py
+    use for CRITICAL/WARNING decisions.
     """
     print(f"\n  [{dataset_key}] Computing sigma calibration scale (alpha={alpha})...")
 
-    # ── Load registry ─────────────────────────────────────────────────────────
-    with open(registry_path, "r") as f:
-        registry = yaml.safe_load(f) or {}
-
+    registry = load_registry(registry_path)
     if dataset_key not in registry or "champion" not in registry[dataset_key]:
         print(f"  No champion config for {dataset_key}. Run full training first.")
         return 1.0
 
-    champion   = registry[dataset_key]["champion"]
-    bb_name    = champion["backbone"]
-    bb_cfg     = champion["backbone_config"]
+    champion = registry[dataset_key]["champion"]
+    bb_name = champion["backbone"]
+    bb_cfg = champion["backbone_config"]
     seq_length = bb_cfg["seq_length"]
-    input_dim  = bb_cfg["input_dim"]
-    bb_kwargs  = {k: v for k, v in bb_cfg.items()
-                  if k not in ("input_dim", "seq_length")}
+    input_dim = bb_cfg["input_dim"]
+    bb_kwargs = {k: v for k, v in bb_cfg.items() if k not in ("input_dim", "seq_length")}
 
-    # ── Load data (same split as training) ────────────────────────────────────
     feature_path = _ROOT / "data" / "processed" / dataset_key / "train_features.csv"
     if not feature_path.exists():
         raise FileNotFoundError(f"Feature file not found: {feature_path}")
 
-    full_df          = pd.read_csv(feature_path)
-    _, val_df        = split_by_engine(full_df)   # random_state=42 matches training
+    full_df = pd.read_csv(feature_path)
+    _, val_df = split_by_engine(full_df)  # random_state=42 matches training
 
-    # ── Rebuild backbone + load weights ───────────────────────────────────────
     model = build_backbone(bb_name, input_dim=input_dim, backbone_cfg=bb_kwargs)
     model.load_state_dict(
-        torch.load(
-            Path(champion["artifacts"]["backbone"]),
-            map_location=DEVICE,
-            weights_only=True,
-        )
+        torch.load(Path(champion["artifacts"]["backbone"]), map_location=DEVICE, weights_only=True)
     )
 
-    # ── Extract val features ──────────────────────────────────────────────────
-    val_loader     = make_loader(val_df, seq_length=seq_length,
-                                 batch_size=256, shuffle=False)
-    _, y_val       = create_sequences(val_df, seq_length=seq_length)
-    X_val          = get_backbone_features(model, val_loader)
+    val_loader = make_loader(val_df, seq_length=seq_length, batch_size=256, shuffle=False)
+    _, y_val = create_sequences(val_df, seq_length=seq_length)
+    X_val = get_backbone_features(model, val_loader)
 
-    # ── NGBoost distribution on val set ───────────────────────────────────────
-    ngb_model      = joblib.load(Path(champion["artifacts"]["meta_ngboost"]))
-    val_dists      = ngb_model.pred_dist(X_val)
-    mu             = val_dists.loc
-    sigma          = val_dists.scale
+    ngb_model = joblib.load(Path(champion["artifacts"]["meta_ngboost"]))
+    val_dists = ngb_model.pred_dist(X_val)
+    mu, sigma = val_dists.loc, val_dists.scale
 
-    # ── Current coverage (before scaling) ────────────────────────────────────
-    current_coverage = float(
-        ((y_val >= mu - norm.ppf((1 + alpha) / 2) * sigma) &
-         (y_val <= mu + norm.ppf((1 + alpha) / 2) * sigma)).mean()
-    )
-    print(f"  Current {int(alpha*100)}% coverage : {current_coverage:.4f}  "
-          f"(target {alpha:.2f})")
+    z = norm.ppf((1 + alpha) / 2)
+    current_coverage = float(((y_val >= mu - z * sigma) & (y_val <= mu + z * sigma)).mean())
+    print(f"  Current {int(alpha*100)}% coverage : {current_coverage:.4f}  (target {alpha:.2f})")
 
-    # ── brentq root-finding ───────────────────────────────────────────────────
-    # Bracket [0.01, 10.0] is safe: at s=0.01 coverage≈0 (too narrow),
-    # at s=10 coverage≈1.0 (spans the whole range). The function is monotone
-    # in s so there is exactly one root.
-    scale = brentq(
-        _coverage_error,
-        a    = 0.01,
-        b    = 10.0,
-        args = (y_val, mu, sigma, alpha),
-        xtol = 1e-6,
-    )
-    print(f"  Sigma scale factor : {scale:.6f}  "
-          f"({'↑ widen intervals' if scale > 1 else '↓ narrow intervals'})")
+    # Bracket [0.01, 10.0] is safe: coverage is monotone in s, ~0 at s=0.01
+    # (too narrow) and ~1.0 at s=10 (spans the whole range) — exactly one root.
+    scale = brentq(_coverage_error, a=0.01, b=10.0, args=(y_val, mu, sigma, alpha), xtol=1e-6)
+    print(f"  Sigma scale factor : {scale:.6f}  ({'↑ widen intervals' if scale > 1 else '↓ narrow intervals'})")
 
-    # Verify the result
-    post_coverage = float(
-        ((y_val >= mu - norm.ppf((1 + alpha) / 2) * scale * sigma) &
-         (y_val <= mu + norm.ppf((1 + alpha) / 2) * scale * sigma)).mean()
-    )
+    post_coverage = float(((y_val >= mu - z * scale * sigma) & (y_val <= mu + z * scale * sigma)).mean())
     print(f"  Post-scale coverage: {post_coverage:.4f}  (target {alpha:.2f})")
 
-    # ── Save to registry ──────────────────────────────────────────────────────
-    with open(registry_path, "r") as f:
-        current = yaml.safe_load(f) or {}
-
-    current[dataset_key]["champion"]["calibration_scale"]       = float(scale)
-    current[dataset_key]["champion"]["calibration_alpha"]       = alpha
+    current = load_registry(registry_path)
+    current[dataset_key]["champion"]["calibration_scale"] = float(scale)
+    current[dataset_key]["champion"]["calibration_alpha"] = alpha
     current[dataset_key]["champion"]["calibration_pre_coverage"] = current_coverage
-    current[dataset_key]["champion"]["calibrated_at"]           = str(datetime.date.today())
-
-    _safe_yaml_write(registry_path, current)
+    current[dataset_key]["champion"]["calibrated_at"] = str(datetime.date.today())
+    save_registry(registry_path, current)
     print(f"  Registry updated → calibration_scale={scale:.6f}")
 
     return float(scale)
@@ -238,34 +139,15 @@ def calibrate_sigma(
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Full training run: backbone retrain + NGBoost + sigma calibration."
-    )
-    parser.add_argument(
-        "--dataset",
-        choices=["FD001", "FD002", "FD003", "FD004", "all"],
-        default="FD001",
-    )
-    parser.add_argument(
-        "--n_trials", type=int, default=30,
-        help="Optuna trials for NGBoost hyperparameter search.",
-    )
-    parser.add_argument(
-        "--backbone_epochs", type=int, default=150,
-        help="Max epochs for backbone retrain (default 150).",
-    )
-    parser.add_argument(
-        "--backbone_patience", type=int, default=15,
-        help="Early-stopping patience for backbone retrain (default 15).",
-    )
-    parser.add_argument(
-        "--backbone_lr", type=float, default=1e-3,
-        help="Learning rate for backbone retrain (default 1e-3).",
-    )
+    parser = argparse.ArgumentParser(description="Full training run: backbone retrain + NGBoost + sigma calibration.")
+    parser.add_argument("--dataset", choices=["FD001", "FD002", "FD003", "FD004", "all"], default="FD001")
+    parser.add_argument("--n_trials", type=int, default=30, help="Optuna trials for NGBoost hyperparameter search.")
+    parser.add_argument("--backbone_epochs", type=int, default=150, help="Max epochs for backbone retrain (default 150).")
+    parser.add_argument("--backbone_patience", type=int, default=15, help="Early-stopping patience for backbone retrain (default 15).")
+    parser.add_argument("--backbone_lr", type=float, default=1e-3, help="Learning rate for backbone retrain (default 1e-3).")
     parser.add_argument(
         "--calibrate_only", action="store_true",
-        help="Skip all training. Just compute and save sigma calibration scale "
-             "for each dataset using the already-trained models.",
+        help="Skip all training. Just compute and save sigma calibration scale for each dataset using the already-trained models.",
     )
     return parser.parse_args()
 
@@ -273,63 +155,48 @@ def parse_args() -> argparse.Namespace:
 # ── Per-dataset full training pipeline ───────────────────────────────────────
 
 def train_meta_for_dataset(
-    dataset_key:       str,
-    n_trials:          int,
-    registry_path:     Path,
-    backbone_epochs:   int,
+    dataset_key: str,
+    n_trials: int,
+    registry_path: Path,
+    backbone_epochs: int,
     backbone_patience: int,
-    backbone_lr:       float,
+    backbone_lr: float,
 ) -> None:
-    print(f"\n{'='*60}")
-    print(f"  {dataset_key}")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}\n  {dataset_key}\n{'='*60}")
 
-    # ── Load registry ─────────────────────────────────────────────────────────
-    with open(registry_path, "r") as f:
-        registry = yaml.safe_load(f) or {}
-
+    registry = load_registry(registry_path)
     if dataset_key not in registry or "champion" not in registry[dataset_key]:
         print(f"  No champion config for {dataset_key}. Run tune.py first.")
         return
 
-    champion   = registry[dataset_key]["champion"]
-    bb_name    = champion["backbone"]
-    bb_cfg     = champion["backbone_config"]
+    champion = registry[dataset_key]["champion"]
+    bb_name = champion["backbone"]
+    bb_cfg = champion["backbone_config"]
     seq_length = bb_cfg["seq_length"]
-    input_dim  = bb_cfg["input_dim"]
-    bb_kwargs  = {k: v for k, v in bb_cfg.items()
-                  if k not in ("input_dim", "seq_length")}
+    input_dim = bb_cfg["input_dim"]
+    bb_kwargs = {k: v for k, v in bb_cfg.items() if k not in ("input_dim", "seq_length")}
 
-    # ── Load data ─────────────────────────────────────────────────────────────
     feature_path = _ROOT / "data" / "processed" / dataset_key / "train_features.csv"
     if not feature_path.exists():
         raise FileNotFoundError(f"Feature file not found: {feature_path}")
 
-    full_df          = pd.read_csv(feature_path)
+    full_df = pd.read_csv(feature_path)
     train_df, val_df = split_by_engine(full_df)
 
     print(f"  Backbone : {bb_name}  seq_length={seq_length}  input_dim={input_dim}")
-    print(f"  Train    : {train_df['unit_number'].nunique()} engines "
-          f"({len(train_df):,} rows)")
-    print(f"  Val      : {val_df['unit_number'].nunique()} engines "
-          f"({len(val_df):,} rows)")
+    print(f"  Train    : {train_df['unit_number'].nunique()} engines ({len(train_df):,} rows)")
+    print(f"  Val      : {val_df['unit_number'].nunique()} engines ({len(val_df):,} rows)")
 
-    # =========================================================================
-    # STAGE 1 — Retrain backbone from scratch
-    # =========================================================================
-    print(f"\n  [Stage 1] Retraining {bb_name} backbone "
-          f"({backbone_epochs} epochs max, patience={backbone_patience})...")
+    # ── Stage 1: retrain backbone from scratch ──────────────────────────────
+    print(f"\n  [Stage 1] Retraining {bb_name} backbone ({backbone_epochs} epochs max, patience={backbone_patience})...")
 
-    model           = build_backbone(bb_name, input_dim=input_dim, backbone_cfg=bb_kwargs)
-    train_loader_bb = make_loader(train_df, seq_length=seq_length,
-                                  batch_size=256, shuffle=True)
-    val_loader_bb   = make_loader(val_df,   seq_length=seq_length,
-                                  batch_size=256, shuffle=False)
+    model = build_backbone(bb_name, input_dim=input_dim, backbone_cfg=bb_kwargs)
+    train_loader_bb = make_loader(train_df, seq_length=seq_length, batch_size=256, shuffle=True)
+    val_loader_bb = make_loader(val_df, seq_length=seq_length, batch_size=256, shuffle=False)
 
     model, best_bb_rmse = train_backbone(
         model, train_loader_bb, val_loader_bb,
-        cfg={"lr": backbone_lr, "epochs": backbone_epochs,
-             "patience": backbone_patience},
+        cfg={"lr": backbone_lr, "epochs": backbone_epochs, "patience": backbone_patience},
         trial=None, verbose=True,
     )
     print(f"\n  [Stage 1] Best backbone val RMSE: {best_bb_rmse:.4f}")
@@ -339,43 +206,33 @@ def train_meta_for_dataset(
     torch.save(model.state_dict(), backbone_path)
     print(f"  [Stage 1] Saved → {backbone_path}")
 
-    # =========================================================================
-    # STAGE 2 — Extract backbone features
-    # =========================================================================
+    # ── Stage 2: extract backbone features ──────────────────────────────────
     print("\n  [Stage 2] Extracting backbone features...")
 
-    train_loader = make_loader(train_df, seq_length=seq_length,
-                               batch_size=256, shuffle=False)
-    val_loader   = make_loader(val_df,   seq_length=seq_length,
-                               batch_size=256, shuffle=False)
-
+    train_loader = make_loader(train_df, seq_length=seq_length, batch_size=256, shuffle=False)
+    val_loader = make_loader(val_df, seq_length=seq_length, batch_size=256, shuffle=False)
     _, y_train = create_sequences(train_df, seq_length=seq_length)
-    _, y_val   = create_sequences(val_df,   seq_length=seq_length)
-
+    _, y_val = create_sequences(val_df, seq_length=seq_length)
     X_train = get_backbone_features(model, train_loader)
-    X_val   = get_backbone_features(model, val_loader)
+    X_val = get_backbone_features(model, val_loader)
 
     print(f"  Train features : {X_train.shape}   targets: {y_train.shape}")
     print(f"  Val   features : {X_val.shape}   targets: {y_val.shape}")
 
-    # =========================================================================
-    # STAGE 3 — NGBoost hyperparameter search
-    # =========================================================================
+    # ── Stage 3: NGBoost hyperparameter search ──────────────────────────────
     print(f"\n  [Stage 3] NGBoost Optuna search ({n_trials} trials, obj=NLL)...")
 
     def objective(trial: optuna.Trial) -> float:
-        n_est   = trial.suggest_int("n_estimators",     100, 1000, step=50)
-        lr_ngb  = trial.suggest_float("learning_rate",  0.005, 0.1, log=True)
-        depth   = trial.suggest_int("max_depth",         2, 6)
-        min_smp = trial.suggest_int("min_samples_leaf",  1, 20)
+        n_est = trial.suggest_int("n_estimators", 100, 1000, step=50)
+        lr_ngb = trial.suggest_float("learning_rate", 0.005, 0.1, log=True)
+        depth = trial.suggest_int("max_depth", 2, 6)
+        min_smp = trial.suggest_int("min_samples_leaf", 1, 20)
 
         meta = NGBRegressor(
-            n_estimators  = n_est,
-            learning_rate = lr_ngb,
-            Base          = DecisionTreeRegressor(
-                max_depth=depth, min_samples_leaf=min_smp
-            ),
-            verbose = False,
+            n_estimators=n_est,
+            learning_rate=lr_ngb,
+            Base=DecisionTreeRegressor(max_depth=depth, min_samples_leaf=min_smp),
+            verbose=False,
         )
         meta.fit(X_train, y_train)
         return float(-meta.pred_dist(X_val).logpdf(y_val).mean())
@@ -396,41 +253,32 @@ def train_meta_for_dataset(
     print(f"  Best val NLL : {study.best_value:.4f}")
     print(f"  Best params  : {best_params}")
 
-    # =========================================================================
-    # STAGE 4 — Train final NGBoost + evaluate
-    # =========================================================================
+    # ── Stage 4: train final NGBoost + evaluate ─────────────────────────────
     print("\n  [Stage 4] Training final NGBoost...")
     final_model = NGBRegressor(
-        n_estimators  = best_params["n_estimators"],
-        learning_rate = best_params["learning_rate"],
-        Base          = DecisionTreeRegressor(
-            max_depth        = best_params["max_depth"],
-            min_samples_leaf = best_params["min_samples_leaf"],
-        ),
+        n_estimators=best_params["n_estimators"],
+        learning_rate=best_params["learning_rate"],
+        Base=DecisionTreeRegressor(max_depth=best_params["max_depth"], min_samples_leaf=best_params["min_samples_leaf"]),
         verbose=False, verbose_eval=100,
     )
     final_model.fit(X_train, y_train)
 
     val_dists = final_model.pred_dist(X_val)
-    mu        = val_dists.loc
-    sigma     = val_dists.scale
-    val_nll   = float(-val_dists.logpdf(y_val).mean())
+    mu, sigma = val_dists.loc, val_dists.scale
+    val_nll = float(-val_dists.logpdf(y_val).mean())
     val_preds = final_model.predict(X_val)
-    val_rmse  = float(np.sqrt(mean_squared_error(y_val, val_preds)))
-    val_mae   = float(mean_absolute_error(y_val, val_preds))
+    val_rmse = float(np.sqrt(mean_squared_error(y_val, val_preds)))
+    val_mae = float(mean_absolute_error(y_val, val_preds))
 
-    d    = val_preds - y_val
-    nasa = float(np.sum(np.where(d < 0, np.exp(-d/13)-1, np.exp(d/10)-1)))
+    d = val_preds - y_val
+    nasa = float(np.sum(np.where(d < 0, np.exp(-d / 13) - 1, np.exp(d / 10) - 1)))
 
-    within = {
-        f"within_{n}_cycles": float(np.mean(np.abs(val_preds - y_val) <= n))
-        for n in [5, 10, 15]
-    }
+    within = {f"within_{n}_cycles": float(np.mean(np.abs(val_preds - y_val) <= n)) for n in [5, 10, 15]}
 
     calibration: dict[str, float] = {}
     for alpha in [0.50, 0.80, 0.90, 0.95]:
         z = norm.ppf((1 + alpha) / 2)
-        in_band = (y_val >= mu - z*sigma) & (y_val <= mu + z*sigma)
+        in_band = (y_val >= mu - z * sigma) & (y_val <= mu + z * sigma)
         calibration[f"coverage_{int(alpha*100)}"] = float(in_band.mean())
 
     auc_metrics: dict[str, float] = {}
@@ -438,9 +286,7 @@ def train_meta_for_dataset(
         binary_true = (y_val < horizon).astype(int)
         if 0 < binary_true.sum() < len(binary_true):
             probs = norm.cdf(horizon, loc=mu, scale=sigma)
-            auc_metrics[f"auc_failure_{horizon}"] = float(
-                roc_auc_score(binary_true, probs)
-            )
+            auc_metrics[f"auc_failure_{horizon}"] = float(roc_auc_score(binary_true, probs))
 
     pi_width_90 = float(np.mean(2 * norm.ppf(0.95) * sigma))
 
@@ -465,20 +311,17 @@ def train_meta_for_dataset(
     joblib.dump(final_model, meta_path)
     print(f"\n  Saved NGBoost → {meta_path}")
 
-    # ── Update registry ───────────────────────────────────────────────────────
-    with open(registry_path, "r") as f:
-        current = yaml.safe_load(f) or {}
-
+    current = load_registry(registry_path)
     current[dataset_key]["champion"]["meta_model"] = "ngboost"
     current[dataset_key]["champion"]["meta_model_config"] = {
-        "n_estimators":     int(best_params["n_estimators"]),
-        "learning_rate":    float(best_params["learning_rate"]),
-        "max_depth":        int(best_params["max_depth"]),
+        "n_estimators": int(best_params["n_estimators"]),
+        "learning_rate": float(best_params["learning_rate"]),
+        "max_depth": int(best_params["max_depth"]),
         "min_samples_leaf": int(best_params["min_samples_leaf"]),
     }
     current[dataset_key]["champion"]["metrics"].update({
-        "val_nll":     val_nll, "val_rmse":  val_rmse,
-        "val_mae":     val_mae, "nasa_score": nasa,
+        "val_nll": val_nll, "val_rmse": val_rmse,
+        "val_mae": val_mae, "nasa_score": nasa,
         "pi_width_90": pi_width_90,
         "calibration": calibration,
         **within, **auc_metrics,
@@ -487,30 +330,21 @@ def train_meta_for_dataset(
         "epochs": backbone_epochs, "patience": backbone_patience,
         "lr": backbone_lr, "best_val_rmse": float(best_bb_rmse),
     }
-    current[dataset_key]["champion"]["trained_at"]   = str(datetime.date.today())
+    current[dataset_key]["champion"]["trained_at"] = str(datetime.date.today())
     current[dataset_key]["champion"]["optuna_study"] = str(study_db)
-
-    _safe_yaml_write(registry_path, current)
+    save_registry(registry_path, current)
     print(f"  Registry updated → {registry_path.name}")
 
-    # =========================================================================
-    # STAGE 5 — Sigma calibration (always runs after full training)
-    # =========================================================================
+    # ── Stage 5: sigma calibration (always runs after full training) ───────
     calibrate_sigma(dataset_key, registry_path)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    args     = parse_args()
+    args = parse_args()
     registry = _ROOT / "config" / "model_registry.yaml"
-    datasets = (
-        ["FD001", "FD002", "FD003", "FD004"]
-        if args.dataset == "all" else [args.dataset]
-    )
+    datasets = ["FD001", "FD002", "FD003", "FD004"] if args.dataset == "all" else [args.dataset]
 
     if args.calibrate_only:
-        # Fast path — no retraining, just compute and save sigma scale factors
         print("Calibrate-only mode: computing sigma scale factors from existing models.")
         for ds in datasets:
             calibrate_sigma(ds, registry)
@@ -518,10 +352,10 @@ if __name__ == "__main__":
     else:
         for ds in datasets:
             train_meta_for_dataset(
-                dataset_key       = ds,
-                n_trials          = args.n_trials,
-                registry_path     = registry,
-                backbone_epochs   = args.backbone_epochs,
-                backbone_patience = args.backbone_patience,
-                backbone_lr       = args.backbone_lr,
+                dataset_key=ds,
+                n_trials=args.n_trials,
+                registry_path=registry,
+                backbone_epochs=args.backbone_epochs,
+                backbone_patience=args.backbone_patience,
+                backbone_lr=args.backbone_lr,
             )

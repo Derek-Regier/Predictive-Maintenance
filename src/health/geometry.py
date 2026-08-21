@@ -31,7 +31,6 @@ import numpy as np
 # collapses to ~0 (e.g. a very small or unusually uniform healthy cluster).
 _EPS = 1e-8
 
-
 def kl_divergence(
     mu1: np.ndarray, sigma1: np.ndarray, mu2: np.ndarray, sigma2: np.ndarray
 ) -> np.ndarray | float:
@@ -44,11 +43,7 @@ def kl_divergence(
     sigma1 = np.clip(sigma1, _EPS, None)
     sigma2 = np.clip(sigma2, _EPS, None)
 
-    per_dim = (
-        np.log(sigma2 / sigma1)
-        + (sigma1**2 + (mu1 - mu2) ** 2) / (2 * sigma2**2)
-        - 0.5
-    )
+    per_dim = (np.log(sigma2 / sigma1) + (sigma1**2 + (mu1 - mu2) ** 2) / (2 * sigma2**2)- 0.5)
     return np.sum(per_dim, axis=-1)
 
 
@@ -89,7 +84,7 @@ def all_distances(
     what health_monitor.py should call per engine-timestep (or per batch)
     rather than calling each function separately.
 
-    mu/sigma        : current encoded distribution, shape (latent_dim,) or (batch, latent_dim)
+    mu/sigma : current encoded distribution, shape (latent_dim,) or (batch, latent_dim)
     mu_ref/sigma_ref : healthy reference for this engine's operating cluster, same shape
 
     Returns a dict with keys "kl_div", "js_div", "wasserstein" — each a
