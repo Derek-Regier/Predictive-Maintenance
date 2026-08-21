@@ -53,14 +53,14 @@ def load_data(filename: str) -> pd.DataFrame:
 
 def load_rul(filename: str) -> pd.DataFrame:
     rul_df = pd.read_csv(filename, sep=r"\s+", header=None)
-    rul_df.columns    = ["RUL"]
+    rul_df.columns = ["RUL"]
     rul_df["unit_number"] = rul_df.index + 1
     return rul_df
 
 def compute_RUL(df: pd.DataFrame) -> pd.DataFrame:
     """Train data: RUL = cycles until last observed cycle per engine."""
-    max_cycles  = df.groupby("unit_number")["time_in_cycles"].transform("max")
-    df["RUL"]   = max_cycles - df["time_in_cycles"]
+    max_cycles = df.groupby("unit_number")["time_in_cycles"].transform("max")
+    df["RUL"] = max_cycles - df["time_in_cycles"]
     return df
 
 def attach_test_rul(test_df: pd.DataFrame, rul_df: pd.DataFrame) -> pd.DataFrame:
@@ -69,10 +69,7 @@ def attach_test_rul(test_df: pd.DataFrame, rul_df: pd.DataFrame) -> pd.DataFrame
     Reconstruct full RUL for every row:
         RUL_at_row = provided_RUL + (last_cycle - current_cycle)
     """
-    last_cycles = (test_df.groupby("unit_number")["time_in_cycles"]
-                   .max()
-                   .reset_index()
-                   .rename(columns={"time_in_cycles": "max_cycle"}))
+    last_cycles = (test_df.groupby("unit_number")["time_in_cycles"].max().reset_index().rename(columns={"time_in_cycles": "max_cycle"}))
     last_cycles = last_cycles.merge(rul_df, on="unit_number")
 
     test_df = test_df.merge(last_cycles, on="unit_number")
@@ -95,12 +92,12 @@ def drop_low_variance(
     print(f" Low-variance drop  : {len(cols_to_drop)} sensors removed {cols_to_drop}")
 
     train_df = train_df.drop(columns=cols_to_drop)
-    test_df  = test_df.drop(columns=cols_to_drop)
+    test_df = test_df.drop(columns=cols_to_drop)
     return train_df, test_df, cols_to_drop
 
 def fit_clusters(
-    train_df:     pd.DataFrame,
-    n_clusters:   int,
+    train_df:pd.DataFrame,
+    n_clusters: int,
     artifact_dir: str,
 ) -> tuple[pd.DataFrame, KMeans]:
     """
@@ -121,13 +118,13 @@ def apply_clusters(test_df: pd.DataFrame, kmeans: KMeans) -> pd.DataFrame:
 
 
 def fit_scalers(
-    train_df:      pd.DataFrame,
-    n_clusters:    int,
+    train_df: pd.DataFrame,
+    n_clusters: int,
     active_sensors: list[str],
-    artifact_dir:  str,
+    artifact_dir: str,
 ) -> tuple[pd.DataFrame, dict]:
     """
-    Fit one MinMaxScaler per operating cluster — on SENSOR columns only.
+    Fit one MinMaxScaler per operating cluster on SENSOR columns only.
 
     Op_settings are excluded: within a single cluster they are nearly constant
     (the cluster IS that operating point), so per-cluster scaling would produce
@@ -140,9 +137,8 @@ def fit_scalers(
     for cluster_id in range(n_clusters):
         mask = train_df["op_cluster"] == cluster_id
         if not mask.any():
-            print(f"  Warning: cluster {cluster_id} has no training rows — skipped")
+            print(f"  Warning: cluster {cluster_id} has no training rows: skipped")
             continue
-
         scaler = MinMaxScaler()
         train_df.loc[mask, active_sensors] = scaler.fit_transform(
             train_df.loc[mask, active_sensors]
@@ -151,15 +147,11 @@ def fit_scalers(
 
     os.makedirs(artifact_dir, exist_ok=True)
     joblib.dump(scalers, os.path.join(artifact_dir, "scalers.pkl"))
-    print(f"  Scalers saved      : {artifact_dir}/scalers.pkl  "
+    print(f"  Scalers saved: {artifact_dir}/scalers.pkl  "
           f"({len(scalers)} cluster scaler(s))")
     return train_df, scalers
 
-def apply_scalers(
-    test_df:        pd.DataFrame,
-    scalers:        dict,
-    active_sensors: list[str],
-) -> pd.DataFrame:
+def apply_scalers(test_df: pd.DataFrame, scalers: dict,active_sensors: list[str],) -> pd.DataFrame:
     """Apply the per-cluster scalers to test data. Never fits."""
     for cluster_id, scaler in scalers.items():
         mask = test_df["op_cluster"] == cluster_id
@@ -178,15 +170,13 @@ def process_dataset(
     """
     Full preprocessing pipeline for one CMAPSS dataset.
     """
-    print(f"\n{'='*55}")
-    print(f"  Processing {dataset_name}")
-    print(f"{'='*55}")
+    print(f"Processing {dataset_name}")
 
     artifact_dir = cfg["artifact_dir"]
 
     train_df = load_data(os.path.join(raw_dir, f"train_{dataset_name}.txt"))
-    test_df  = load_data(os.path.join(raw_dir, f"test_{dataset_name}.txt"))
-    rul_df   = load_rul(os.path.join(raw_dir,  f"RUL_{dataset_name}.txt"))
+    test_df = load_data(os.path.join(raw_dir, f"test_{dataset_name}.txt"))
+    rul_df = load_rul(os.path.join(raw_dir,  f"RUL_{dataset_name}.txt"))
 
     print(f"  Loaded train: {train_df.shape[0]:,} rows  "
           f"{train_df['unit_number'].nunique()} engines")
@@ -241,4 +231,4 @@ if __name__ == "__main__":
         cfg = load_config(args.config_path, ds)
         process_dataset(ds, cfg, args.raw_dir, args.processed_dir)
 
-    print("\nDone.")
+    print("\n Done.")

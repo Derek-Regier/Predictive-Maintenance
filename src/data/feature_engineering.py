@@ -29,7 +29,7 @@ def feature_engineering(train_df, test_df, cfg: dict):
             df[sensor + "_lag1"] = grouped.transform(lambda x: x.shift(1))
             df[sensor + "_lag2"] = grouped.transform(lambda x: x.shift(2))
 
-            # Delta/trend — how much did the sensor change since last cycle
+            # Delta/trend how much did the sensor change since last cycle
             df[sensor + "_delta"] = df[sensor] - df[sensor + "_lag1"]
 
     train_df = train_df.dropna()
