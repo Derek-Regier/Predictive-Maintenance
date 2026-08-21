@@ -1,25 +1,22 @@
 """
-dashboard/pages/2_Engine_Deep_Dive.py
-
-Engine Deep Dive — detailed per-engine analysis.
+Engine Deep Dive.
 
 This page shows the full degradation history of one selected engine:
   - RUL trajectory with confidence intervals
   - Failure probability evolution over time
-  - VAE health index trajectory (if health_monitor.py has been run)
+  - VAE health index trajectory
   - Prediction residuals over time
 
 Navigation
 ----------
-Arrives here from Fleet Overview (row click → session_state["selected_engine"])
-or manually via the sidebar engine selector.
+Arrives here from Fleet Overview 
 
 Streamlit concepts used here
 -----------------------------
-st.tabs()           — multiple charts in one area, user switches tabs
-st.session_state    — reads selected_engine set by Fleet Overview
-st.selectbox()      — manual engine override in sidebar
-st.expander()       — collapsible technical detail section
+st.tabs() -> multiple charts in one area, user switches tabs
+st.session_state -> reads selected_engine set by Fleet Overview
+st.selectbox() -> manual engine override in sidebar
+st.expander() -> collapsible technical detail section
 """
 
 import sys
@@ -48,7 +45,7 @@ from utils.charts import (
 from utils.styles import ALERT_COLORS, ALERT_BG_COLORS, CUSTOM_CSS, HEADER_HTML, SIGNATURE_HTML
 
 st.set_page_config(
-    page_title="Engine Deep Dive — Predictive Maintenance",
+    page_title="Engine Deep Dive",
     page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -58,9 +55,8 @@ st.markdown(HEADER_HTML, unsafe_allow_html=True)
 st.markdown(SIGNATURE_HTML, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # SIDEBAR
-# ─────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.markdown("### Engine Selection")
@@ -98,21 +94,19 @@ with st.sidebar:
         st.switch_page("pages/1_Fleet_Overview.py")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # DATA LOADING
-# ─────────────────────────────────────────────────────────────────────────────
 
-pred_all     = load_predictions_all(selected_dataset)
-pred_last    = load_predictions_last(selected_dataset)
-health_all   = load_health_indices(selected_dataset)
-health_summ  = load_health_summary(selected_dataset)
+pred_all = load_predictions_all(selected_dataset)
+pred_last = load_predictions_last(selected_dataset)
+health_all = load_health_indices(selected_dataset)
+health_summ = load_health_summary(selected_dataset)
 
 # Filter all DataFrames to the selected engine
-engine_pred_all  = pred_all[pred_all["unit_number"] == selected_engine].sort_values("cycle") \
+engine_pred_all = pred_all[pred_all["unit_number"] == selected_engine].sort_values("cycle") \
                    if not pred_all.empty else pd.DataFrame()
 engine_pred_last = pred_last[pred_last["unit_number"] == selected_engine] \
                    if not pred_last.empty else pd.DataFrame()
-engine_health    = health_all[health_all["unit_number"] == selected_engine].sort_values("cycle") \
+engine_health = health_all[health_all["unit_number"] == selected_engine].sort_values("cycle") \
                    if not health_all.empty else pd.DataFrame()
 
 if engine_pred_all.empty:
@@ -123,21 +117,19 @@ if engine_pred_all.empty:
     st.stop()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # PAGE HEADER
-# ─────────────────────────────────────────────────────────────────────────────
 
-st.title(f"🔬 Engine {selected_engine} — Deep Dive")
+st.title(f"Engine {selected_engine} — Deep Dive")
 
 # Pull the summary prediction for this engine (last-timestep row)
 if not engine_pred_last.empty:
-    row       = engine_pred_last.iloc[0]
-    tier      = row.get("alert_tier", "NOMINAL")
+    row = engine_pred_last.iloc[0]
+    tier = row.get("alert_tier", "NOMINAL")
     tier_color = ALERT_COLORS.get(tier, "#6B7280")
-    tier_bg    = ALERT_BG_COLORS.get(tier, "#F9FAFB")
-    padded     = bool(row.get("padded", False))
+    tier_bg = ALERT_BG_COLORS.get(tier, "#F9FAFB")
+    padded = bool(row.get("padded", False))
 
-    # Status banner — coloured by alert tier
+    # Status banner coloured by alert tier
     st.markdown(
         f"""
         <div style="
@@ -193,19 +185,19 @@ tab_labels = ["RUL Trajectory", "Failure Probability",
               "Health Index", "Residuals"]
 tab1, tab2, tab3, tab4 = st.tabs(tab_labels)
 
-# ── Tab 1: RUL Trajectory ────────────────────────────────────────────────────
+# Tab 1: RUL Trajectory
 with tab1:
     st.markdown(
         "The **blue line** is the model's predicted mean RUL. "
         "The **shaded band** is the calibrated 90% prediction interval — "
         "the model believes the true RUL falls within this range 90% of the time. "
-        "The **dotted grey line** is the actual true RUL (ground truth). "
+        "The **dotted grey line** is the actual true RUL. "
         "The **red zone** marks the critical end-of-life region (RUL ≤ 30 cycles)."
     )
     rul_fig = build_rul_trajectory(engine_pred_all, selected_engine)
     st.plotly_chart(rul_fig, use_container_width=True)
 
-# ── Tab 2: Failure Probability ───────────────────────────────────────────────
+# Tab 2: Failure Probability 
 with tab2:
     st.markdown(
         "**P(RUL < 20)** (red) and **P(RUL < 50)** (amber) computed from "
@@ -216,7 +208,7 @@ with tab2:
     prob_fig = build_failure_probability(engine_pred_all, selected_engine)
     st.plotly_chart(prob_fig, use_container_width=True)
 
-# ── Tab 3: Health Index (VAE) ─────────────────────────────────────────────────
+# Tab 3: Health Index (VAE) 
 with tab3:
     if engine_health.empty:
         st.info(
@@ -227,7 +219,7 @@ with tab3:
         st.markdown(
             "Four VAE-derived health indices, each normalised to **[0, 1]** "
             "per engine so they're visually comparable. "
-            "**Reconstruction error** (red) is the primary signal — it rises "
+            "**Reconstruction error** (red) is the primary signal - it rises "
             "as the engine's sensor patterns deviate from the healthy baseline. "
             "The geometry distances (KL, JS, Wasserstein) are secondary signals "
             "derived from the VAE's latent space representation. "
@@ -252,7 +244,7 @@ with tab3:
             if drift_thr else ""
         )
 
-# ── Tab 4: Residuals ─────────────────────────────────────────────────────────
+# Tab 4: Residuals
 with tab4:
     st.markdown(
         "Prediction residual = **predicted RUL − true RUL**. "
@@ -271,11 +263,11 @@ st.divider()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TECHNICAL DETAILS (collapsed by default)
-# st.expander() hides technical content behind a click — keeps the page
+# st.expander() hides technical content behind a click but keeps the page
 # clean while making details accessible for engineers who want them.
 # ─────────────────────────────────────────────────────────────────────────────
 
-with st.expander("Technical details — model configuration"):
+with st.expander("Technical details and model configuration"):
     if not engine_pred_last.empty:
         row = engine_pred_last.iloc[0]
         tech_col1, tech_col2 = st.columns(2)

@@ -1,6 +1,4 @@
 """
-dashboard/utils/styles.py
-
 All visual constants and CSS for the dashboard.
 
 This file is intentionally separated from data logic so a non-technical
@@ -19,7 +17,7 @@ HOW TO EDIT
   Font is now Inter bold (same as the rest of the dashboard).
 """
 
-# ── Alert tier colours ────────────────────────────────────────────────────────
+# Alert tier colours
 
 ALERT_COLORS = {
     "CRITICAL": "#DC2626",
@@ -42,7 +40,7 @@ ALERT_EMOJI = {
     "NOMINAL":  "🟢 NOMINAL",
 }
 
-# ── Dataset colours ───────────────────────────────────────────────────────────
+# Dataset colours
 
 DATASET_COLORS = {
     "FD001": "#6366F1",
@@ -51,7 +49,7 @@ DATASET_COLORS = {
     "FD004": "#EF4444",
 }
 
-# ── Health index colours ──────────────────────────────────────────────────────
+# Health index colours 
 
 HEALTH_COLORS = {
     "recon_error": "#EF4444",
@@ -62,18 +60,18 @@ HEALTH_COLORS = {
 
 HEALTH_LABELS = {
     "recon_error": "Reconstruction Error",
-    "kl_div":      "KL Divergence",
-    "js_div":      "JS Divergence",
+    "kl_div": "KL Divergence",
+    "js_div": "JS Divergence",
     "wasserstein": "Wasserstein Distance",
 }
 
-# ── Chart sizing ──────────────────────────────────────────────────────────────
+# Chart sizing 
 
-CHART_HEIGHT         = 420
-CHART_HEIGHT_TALL    = 550
+CHART_HEIGHT = 420
+CHART_HEIGHT_TALL = 550
 CHART_HEIGHT_COMPACT = 300
 
-# ── Typography ────────────────────────────────────────────────────────────────
+# Typography 
 # FONT_FAMILY drives both Plotly charts (via CHART_THEME) and Streamlit page
 # text (via CUSTOM_CSS). Change it in one place and it applies everywhere.
 #
@@ -83,49 +81,49 @@ CHART_HEIGHT_COMPACT = 300
 #   3. Set FONT_FAMILY to that font's name + the same fallback stack.
 
 GOOGLE_FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-FONT_FAMILY        = "Inter, -apple-system, sans-serif"
-FONT_SIZE          = 12
+FONT_FAMILY = "Inter, -apple-system, sans-serif"
+FONT_SIZE = 12
 
-# ── Signature ─────────────────────────────────────────────────────────────────
+# Signature 
 # Small initials shown in a fixed corner of every page.
 # Font is now Inter bold (non-cursive) — same as the dashboard body font
 # but at weight 800 so it reads as a distinct mark without being decorative.
 # SIGNATURE_IMPORT is no longer needed (no external font) but kept as an
 # empty string so any code that references it doesn't break.
 
-SIGNATURE_TEXT   = "DR."
-SIGNATURE_FONT   = "Inter, -apple-system, sans-serif"   # non-cursive, matches dashboard
-SIGNATURE_WEIGHT = "800"                                 # extra-bold
+SIGNATURE_TEXT = "DLR"
+SIGNATURE_FONT = "Inter, -apple-system, sans-serif"   # non-cursive, matches dashboard
+SIGNATURE_WEIGHT = "900"                                 # extra-bold
 SIGNATURE_IMPORT = ""                                    # no external font needed
-SIGNATURE_COLOR  = "#9CA3AF"
-SIGNATURE_SIZE   = "1.0rem"                              # slightly smaller than cursive
+SIGNATURE_COLOR = "#9CA3AF"
+SIGNATURE_SIZE = "1.0rem"                              # slightly smaller than cursive
 SIGNATURE_CORNER = {
     "bottom": "14px",
     "right":  "22px",
 }
 
-# ── Header bar ────────────────────────────────────────────────────────────────
+# Header bar 
 # Persistent top bar shown on every page. Edit the text in HEADER_HTML below.
 # Colours are set in the CSS section (.pm-header-bar).
 
-HEADER_BG_COLOR       = "#0F172A"   # dark navy bar — change for a different colour
-HEADER_TITLE_COLOR    = "#F8FAFC"
+HEADER_BG_COLOR = "#0F172A"   # dark navy bar — change for a different colour
+HEADER_TITLE_COLOR = "#F8FAFC"
 HEADER_SUBTITLE_COLOR = "#94A3B8"
-NATIVE_HEADER_HEIGHT  = "3.75rem"   # Streamlit's own built-in header height (60px)
+NATIVE_HEADER_HEIGHT= "3.75rem"   # Streamlit's own built-in header height (60px)
 
-# ── Chart theme ───────────────────────────────────────────────────────────────
+# Chart theme 
 
 CHART_THEME = {
     "font":          {"family": FONT_FAMILY, "size": FONT_SIZE, "color": "#374151"},
     "paper_bgcolor": "rgba(0,0,0,0)",
     "plot_bgcolor":  "rgba(0,0,0,0)",
-    "margin":        {"t": 50, "b": 40, "l": 50, "r": 20},
-    "legend":        {"bgcolor": "rgba(0,0,0,0)", "borderwidth": 0},
-    "xaxis":         {"gridcolor": "#F3F4F6", "linecolor": "#E5E7EB", "zeroline": False},
-    "yaxis":         {"gridcolor": "#F3F4F6", "linecolor": "#E5E7EB", "zeroline": False},
+    "margin": {"t": 50, "b": 40, "l": 50, "r": 20},
+    "legend": {"bgcolor": "rgba(0,0,0,0)", "borderwidth": 0},
+    "xaxis": {"gridcolor": "#F3F4F6", "linecolor": "#E5E7EB", "zeroline": False},
+    "yaxis": {"gridcolor": "#F3F4F6", "linecolor": "#E5E7EB", "zeroline": False},
 }
 
-# ── CSS injected into every page ──────────────────────────────────────────────
+# CSS injected into every page 
 # Loaded on every page via:
 #     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # It's an f-string so the Python variables above are inserted automatically.
@@ -264,7 +262,7 @@ hr {{
 </style>
 """
 
-# ── HTML snippets — imported and rendered by each page ───────────────────────
+# HTML snippets — imported and rendered by each page
 # Each page should inject both of these alongside CUSTOM_CSS.
 # Typical usage at the top of every page file:
 #
@@ -276,8 +274,8 @@ hr {{
 
 HEADER_HTML = f"""
 <div class="pm-header-bar">
-    <span class="pm-header-title"> Predictive Maintenance Dashboard</span>
-    <span class="pm-header-subtitle">NASA CMAPSS Turbofan Engine Dataset</span>
+    <span class="pm-header-title">Turbofan Engine Health & Predictive Maintenance</span>
+    <span class="pm-header-subtitle">NASA C-MAPSS Dataset: RUL Prediction & Health Analytics</span>
 </div>
 """
 

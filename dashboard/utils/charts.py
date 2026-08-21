@@ -1,6 +1,4 @@
 """
-dashboard/utils/charts.py
-
 All Plotly figure builders for the dashboard.
 
 Every function follows the same contract:
@@ -31,9 +29,7 @@ from utils.styles import (
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # HELPER
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _apply_theme(fig: go.Figure, height: int = CHART_HEIGHT) -> go.Figure:
     """Apply the global chart theme and height to any figure."""
@@ -52,10 +48,7 @@ def _normalise_column(series: pd.Series) -> pd.Series:
         return (series - mn) / (mx - mn)
     return pd.Series(0.0, index=series.index)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # FLEET OVERVIEW CHARTS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def build_alert_donut(tier_counts: dict) -> go.Figure:
     """
@@ -141,10 +134,7 @@ def build_cross_dataset_risk_bar(all_metrics: dict[str, dict]) -> go.Figure:
     )
     return _apply_theme(fig, height=CHART_HEIGHT_COMPACT)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # ENGINE DEEP DIVE CHARTS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def build_rul_trajectory(engine_df: pd.DataFrame, engine_id: int) -> go.Figure:
     """
@@ -162,7 +152,7 @@ def build_rul_trajectory(engine_df: pd.DataFrame, engine_id: int) -> go.Figure:
 
     fig = go.Figure()
 
-    # ── End-of-life danger zone (RUL ≤ 30) ───────────────────────────────────
+    # End-of-life danger zone (RUL <= 30)
     # Find the cycle where RUL first drops to 30 to place the zone marker.
     # If no cycle reaches RUL≤30 in this engine's history we skip it.
     eol_cycles = df[df["true_rul"] <= 30]["cycle"]
@@ -175,7 +165,7 @@ def build_rul_trajectory(engine_df: pd.DataFrame, engine_id: int) -> go.Figure:
             annotation_font_size=10, annotation_font_color="#DC2626",
         )
 
-    # ── 90% prediction interval (shaded band) ────────────────────────────────
+    # 90% prediction interval (shaded band) 
     # Build as a filled polygon: trace along upper_90 forward then lower_90 backward.
     x_band = pd.concat([df["cycle"], df["cycle"][::-1]])
     y_band = pd.concat([df["upper_90"], df["lower_90"][::-1]])
@@ -190,7 +180,7 @@ def build_rul_trajectory(engine_df: pd.DataFrame, engine_id: int) -> go.Figure:
         name="90% PI",
     ))
 
-    # ── True RUL (ground truth — shown as context, not prediction) ───────────
+    # True RUL (ground truth — shown as context, not prediction) 
     fig.add_trace(go.Scatter(
         x=df["cycle"], y=df["true_rul"],
         mode="lines",
@@ -199,7 +189,7 @@ def build_rul_trajectory(engine_df: pd.DataFrame, engine_id: int) -> go.Figure:
         hovertemplate="Cycle %{x}: true RUL = %{y:.0f}<extra></extra>",
     ))
 
-    # ── Predicted mean RUL (the model's point estimate) ───────────────────────
+    # Predicted mean RUL (the model's point estimate) 
     fig.add_trace(go.Scatter(
         x=df["cycle"], y=df["pred_rul"],
         mode="lines",
@@ -217,9 +207,7 @@ def build_rul_trajectory(engine_df: pd.DataFrame, engine_id: int) -> go.Figure:
     return _apply_theme(fig, height=CHART_HEIGHT_TALL)
 
 
-def build_failure_probability(engine_df: pd.DataFrame,
-                               engine_id: int,
-                               thresholds: dict | None = None) -> go.Figure:
+def build_failure_probability(engine_df: pd.DataFrame, engine_id: int, thresholds: dict | None = None) -> go.Figure:
     """
     Failure probability trajectory for one engine.
     Two lines: P(RUL<20) in red (CRITICAL threshold) and P(RUL<50)
@@ -229,11 +217,11 @@ def build_failure_probability(engine_df: pd.DataFrame,
     thresholds: optional dict with keys "critical_prob_20" and "warning_prob_50"
                 loaded from datasets.yaml. Defaults to 0.90 / 0.75 if not given.
     """
-    df   = engine_df.sort_values("cycle")
-    thr  = thresholds or {}
+    df = engine_df.sort_values("cycle")
+    thr = thresholds or {}
     crit = thr.get("critical_prob_20", 0.90)
     warn = thr.get("warning_prob_50",  0.75)
-    mon  = thr.get("monitor_prob_50",  0.50)
+    mon = thr.get("monitor_prob_50",  0.50)
 
     fig = go.Figure()
 
@@ -355,7 +343,7 @@ def build_residual_scatter(engine_df: pd.DataFrame, engine_id: int) -> go.Figure
       - Random scatter (no trend over time)
 
     A systematic upward trend (predicting too much life) is more dangerous
-    than a downward trend — the NASA asymmetric score reflects this.
+    than a downward trend and the NASA asymmetric score reflects this.
     """
     df = engine_df.sort_values("cycle")
 
@@ -399,9 +387,7 @@ def build_residual_scatter(engine_df: pd.DataFrame, engine_id: int) -> go.Figure
     return _apply_theme(fig, height=CHART_HEIGHT)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # MODEL PERFORMANCE CHARTS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def build_calibration_subplots(all_cal: dict[str, pd.DataFrame]) -> go.Figure:
     """
@@ -486,15 +472,14 @@ def build_bucket_rmse_chart(all_bucket: dict[str, pd.DataFrame]) -> go.Figure:
     """
     bucket_order  = ["early_life", "mid_life", "end_of_life"]
     bucket_labels = {"early_life": "Early Life\n(RUL > 80)",
-                     "mid_life":   "Mid Life\n(30 < RUL ≤ 80)",
+                     "mid_life": "Mid Life\n(30 < RUL ≤ 80)",
                      "end_of_life":"End of Life\n(RUL ≤ 30)"}
     fig = go.Figure()
 
     for ds, bkt_df in all_bucket.items():
         if bkt_df.empty:
             continue
-        rmse_by_bucket = (bkt_df.set_index("bucket")["rmse"]
-                          .reindex(bucket_order))
+        rmse_by_bucket = (bkt_df.set_index("bucket")["rmse"].reindex(bucket_order))
         fig.add_trace(go.Bar(
             x=[bucket_labels[b] for b in bucket_order],
             y=rmse_by_bucket.values,
@@ -594,9 +579,7 @@ def build_auc_comparison(all_metrics: dict[str, dict]) -> go.Figure:
     return _apply_theme(fig, height=CHART_HEIGHT_COMPACT)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # HEALTH MONITOR CHARTS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def build_recon_error_fleet(health_df: pd.DataFrame,
                               threshold: float | None = None) -> go.Figure:
@@ -685,7 +668,7 @@ def build_latent_norm_vs_rul(health_df: pd.DataFrame) -> go.Figure:
         title="Latent space norm vs True RUL — divergence from healthy origin",
         xaxis_title="True RUL (cycles)",
         xaxis_autorange="reversed",
-        yaxis_title="‖μ‖₂  (L2 norm of encoded mean)",
+        yaxis_title="‖μ‖₂ (L2 norm of encoded mean)",
     )
     return _apply_theme(fig, height=CHART_HEIGHT)
 
@@ -701,9 +684,7 @@ def build_drift_engine_bar(health_df: pd.DataFrame) -> go.Figure:
     if "drift_flag" not in health_df.columns:
         return go.Figure()
 
-    drift_frac = (health_df.groupby("unit_number")["drift_flag"]
-                  .mean()
-                  .sort_values(ascending=True))
+    drift_frac = (health_df.groupby("unit_number")["drift_flag"].mean().sort_values(ascending=True))
 
     # Colour bars: fraction > 0.5 = red, fraction > 0.2 = amber, else blue
     bar_colors = drift_frac.apply(

@@ -1,6 +1,4 @@
 """
-dashboard/utils/data_loader.py
-
 All data loading for the dashboard — every function is decorated with
 @st.cache_data so files are only read from disk once, then cached in
 memory. On widget interaction Streamlit reruns the page script but
@@ -9,14 +7,7 @@ cache_data functions return instantly from the in-memory cache.
 ttl=600 means the cache expires after 10 minutes. After expiry the
 next call re-reads the file. This matters when evaluate.py or
 health_monitor.py is run and writes new CSVs while the dashboard is
-open — it will pick up updates within 10 minutes automatically.
-
-HOW TO USE IN A PAGE
---------------------
-    from utils.data_loader import load_predictions_last, load_metrics_summary
-
-    predictions = load_predictions_last("FD001")   # pd.DataFrame
-    metrics     = load_metrics_summary("FD001")    # dict
+open it will pick up updates within 10 minutes automatically.
 """
 
 from __future__ import annotations
@@ -33,14 +24,12 @@ import yaml
 #   parents[0] = dashboard/utils/
 #   parents[1] = dashboard/
 #   parents[2] = project root
-ROOT     = Path(__file__).resolve().parents[2]
-REPORTS  = ROOT / "reports"
-CONFIG   = ROOT / "config"
+ROOT = Path(__file__).resolve().parents[2]
+REPORTS = ROOT / "reports"
+CONFIG = ROOT / "config"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # PREDICTION DATA
-# ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=600)
 def load_predictions_last(dataset: str) -> pd.DataFrame:
@@ -86,9 +75,7 @@ def load_predictions_all(dataset: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # METRICS AND EVALUATION SUMMARIES
-# ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=600)
 def load_metrics_summary(dataset: str) -> dict:
@@ -133,10 +120,7 @@ def load_bucket_metrics(dataset: str) -> pd.DataFrame:
         return pd.DataFrame()
     return pd.read_csv(path)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HEALTH MONITORING DATA (VAE)
-# ─────────────────────────────────────────────────────────────────────────────
+# HEALTH MONITORING DATA 
 
 @st.cache_data(ttl=600)
 def load_health_indices(dataset: str) -> pd.DataFrame:
@@ -166,9 +150,7 @@ def load_health_summary(dataset: str) -> dict:
         return json.load(f)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
-# ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600)   # registry rarely changes — 1 hour TTL
 def load_registry() -> dict:
@@ -184,10 +166,8 @@ def load_registry() -> dict:
         return yaml.safe_load(f) or {}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CONVENIENCE: LOAD ALL DATASETS AT ONCE
-# ─────────────────────────────────────────────────────────────────────────────
 
+# LOAD ALL DATASETS AT ONCE
 DATASETS = ["FD001", "FD002", "FD003", "FD004"]
 
 def load_all_metrics() -> dict[str, dict]:

@@ -1,7 +1,5 @@
 """
-dashboard/pages/4_Health_Monitor.py
-
-Health Monitor — unsupervised VAE-based health monitoring.
+Health Monitor.
 
 The VAE was trained on healthy engine windows (RUL > threshold) and
 never saw labels. It learned what "normal" sensor patterns look like.
@@ -47,10 +45,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 st.markdown(HEADER_HTML, unsafe_allow_html=True)
 st.markdown(SIGNATURE_HTML, unsafe_allow_html=True)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # SIDEBAR
-# ─────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.markdown("### Health Monitor")
@@ -71,20 +66,16 @@ with st.sidebar:
         "4. High error = sensor pattern outside healthy distribution\n"
         "5. Geometry distances = deviation in latent space"
     )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # DATA LOADING
-# ─────────────────────────────────────────────────────────────────────────────
 
-health_df   = load_health_indices(selected_dataset)
+health_df = load_health_indices(selected_dataset)
 health_summ = load_health_summary(selected_dataset)
-pred_last   = load_predictions_last(selected_dataset)
+pred_last = load_predictions_last(selected_dataset)
 
 st.title("Health Monitor")
 st.caption(f"Dataset: **{selected_dataset}** — VAE-based unsupervised degradation detection")
 
-# ── Handle missing health data ────────────────────────────────────────────────
+# Handle missing health data 
 if health_df.empty:
     st.warning(
         "Health index data not found for this dataset.\n\n"
@@ -96,15 +87,12 @@ if health_df.empty:
     )
     st.stop()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # FLEET SUMMARY CARDS
-# ─────────────────────────────────────────────────────────────────────────────
 
-n_engines        = health_summ.get("n_engines", health_df["unit_number"].nunique())
-n_drifted        = health_summ.get("n_drifted_engines", 0)
-pct_drift        = health_summ.get("pct_windows_drifted", 0)
-thresholds       = health_summ.get("drift_thresholds", {})
+n_engines = health_summ.get("n_engines", health_df["unit_number"].nunique())
+n_drifted = health_summ.get("n_drifted_engines", 0)
+pct_drift = health_summ.get("pct_windows_drifted", 0)
+thresholds = health_summ.get("drift_thresholds", {})
 global_threshold = thresholds.get("global")
 
 m1, m2, m3, m4 = st.columns(4)
@@ -147,7 +135,7 @@ with fleet_col1:
     st.markdown("**Reconstruction error vs True RUL (all engines, all windows)**")
     st.caption(
         "Each point is one sliding window. The reconstruction error should rise "
-        "as true RUL falls — confirming the VAE captures degradation in input space. "
+        "as true RUL falls confirming the VAE captures degradation in input space. "
         "Red = drift flagged, grey = normal."
     )
     recon_fig = build_recon_error_fleet(health_df, global_threshold)
@@ -165,10 +153,7 @@ with fleet_col2:
 
 st.divider()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # LATENT SPACE
-# ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown("### Latent Space Representation")
 st.caption(
@@ -184,10 +169,7 @@ st.plotly_chart(latent_fig, use_container_width=True)
 
 st.divider()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # PER-ENGINE HEALTH TRAJECTORY
-# ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown("### Per-Engine Health Index Trajectory")
 st.caption(
@@ -196,10 +178,10 @@ st.caption(
     "Raw values appear in the hover tooltip."
 )
 
-# Engine selector — pre-populate from session_state if navigated from another page
-all_units      = sorted(health_df["unit_number"].unique().tolist())
-nav_engine     = st.session_state.get("selected_engine", all_units[0])
-default_idx    = all_units.index(nav_engine) if nav_engine in all_units else 0
+# Engine selector - pre-populate from session_state if navigated from another page
+all_units = sorted(health_df["unit_number"].unique().tolist())
+nav_engine = st.session_state.get("selected_engine", all_units[0])
+default_idx = all_units.index(nav_engine) if nav_engine in all_units else 0
 
 selected_engine = st.selectbox("Select engine", all_units, index=default_idx)
 
@@ -211,7 +193,7 @@ if not engine_health.empty:
     st.plotly_chart(health_fig, use_container_width=True)
 
     # Summary stats for this engine
-    n_windows  = len(engine_health)
+    n_windows = len(engine_health)
     n_drifted_w = int(engine_health["drift_flag"].sum()) if "drift_flag" in engine_health.columns else 0
     first_drift = engine_health[engine_health["drift_flag"]]["cycle"].min() \
                   if "drift_flag" in engine_health.columns and n_drifted_w > 0 else None
@@ -246,11 +228,9 @@ if not engine_health.empty:
 st.divider()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # METHODOLOGY NOTE
-# ─────────────────────────────────────────────────────────────────────────────
 
-with st.expander("Methodology — VAE health monitoring"):
+with st.expander("Methodology - VAE health monitoring"):
     st.markdown(f"""
 **Training setup**
 - VAE trained on sequences where RUL > 80 (healthy engine windows only)

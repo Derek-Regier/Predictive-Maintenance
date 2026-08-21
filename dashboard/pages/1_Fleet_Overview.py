@@ -1,28 +1,25 @@
 """
-dashboard/pages/1_Fleet_Overview.py
-
-Fleet Overview — the landing page engineers see first.
-
+Fleet Overview
 Layout
 ------
-Sidebar      : dataset selector, alert tier filter, fleet risk summary
-Top row      : four KPI cards (CRITICAL / WARNING / MONITOR / NOMINAL counts)
-Middle row   : alert donut chart | cross-dataset risk comparison bar
-Main area    : fleet engine table (clickable row → Engine Deep Dive)
+Sidebar : dataset selector, alert tier filter, fleet risk summary
+Top row : four KPI cards (CRITICAL / WARNING / MONITOR / NOMINAL counts)
+Middle row : alert donut chart | cross-dataset risk comparison bar
+Main area : fleet engine table (clickable row → Engine Deep Dive)
 
 Streamlit concepts used here
 -----------------------------
-st.columns()     — side-by-side layout
-st.metric()      — KPI card with optional delta indicator
-st.dataframe()   — interactive table with selection and column formatting
-st.session_state — persists selected engine across page navigation
-st.switch_page() — programmatic navigation to another page
+st.columns() -> side-by-side layout
+st.metric() -> KPI card with optional delta indicator
+st.dataframe() -> interactive table with selection and column formatting
+st.session_state -> persists selected engine across page navigation
+st.switch_page() -> programmatic navigation to another page
 """
 
 import sys
 from pathlib import Path
 
-# ── Path setup ────────────────────────────────────────────────────────────────
+# Path setup 
 # Adds dashboard/ to sys.path so utils imports work regardless of where
 # Streamlit was launched from.
 
@@ -42,12 +39,12 @@ from utils.data_loader import (
 from utils.charts import build_alert_donut, build_cross_dataset_risk_bar
 from utils.styles import ALERT_COLORS, CUSTOM_CSS, HEADER_HTML, SIGNATURE_HTML
 
-# ── Page config + CSS ─────────────────────────────────────────────────────────
+# Page config + CSS 
 # Each page needs its own set_page_config call. layout="wide" is required
-# on every page — not just app.py.
+# on every page, not just app.py.
 
 st.set_page_config(
-    page_title="Fleet Overview — Predictive Maintenance",
+    page_title="Fleet Overview",
     page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -97,7 +94,7 @@ with st.sidebar:
         "Show short-history engines",
         value=True,
         help="Engines with fewer cycles than the model's sequence length were "
-             "padded with repeated rows. Their predictions are less reliable.",
+             "padded with repeated rows.",
     )
 
     st.divider()
@@ -106,17 +103,15 @@ with st.sidebar:
         "detailed trajectory on the Engine Deep Dive page.</small>",
         unsafe_allow_html=True,
     )
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA LOADING
 # All data loading is done through cached functions in data_loader.py.
 # On the first run these read from disk; on reruns they return from cache.
 # ─────────────────────────────────────────────────────────────────────────────
 
-predictions  = load_predictions_last(selected_dataset)
-metrics      = load_metrics_summary(selected_dataset)
-all_metrics  = load_all_metrics()
+predictions = load_predictions_last(selected_dataset)
+metrics = load_metrics_summary(selected_dataset)
+all_metrics = load_all_metrics()
 
 if predictions.empty:
     st.error(
@@ -125,10 +120,7 @@ if predictions.empty:
     )
     st.stop()   # st.stop() halts execution of the rest of the page
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # PAGE HEADER
-# ─────────────────────────────────────────────────────────────────────────────
 
 st.title("Fleet Overview")
 st.caption(
@@ -154,7 +146,7 @@ with col1:
     st.metric(
         label="🔴 CRITICAL",
         value=n_crit,
-        help="P(RUL < 20 cycles) above threshold — immediate action required",
+        help="P(RUL < 20 cycles) above threshold - immediate action required",
     )
 
 with col2:
@@ -162,7 +154,7 @@ with col2:
     st.metric(
         label="🟡 WARNING",
         value=n_warn,
-        help="P(RUL < 50 cycles) above threshold — schedule maintenance",
+        help="P(RUL < 50 cycles) above threshold - schedule maintenance",
     )
 
 with col3:
@@ -170,7 +162,7 @@ with col3:
     st.metric(
         label="🔵 MONITOR",
         value=n_mon,
-        help="P(RUL < 50 cycles) above lower threshold — flag for inspection",
+        help="P(RUL < 50 cycles) above lower threshold - flag for inspection",
     )
 
 with col4:
@@ -178,7 +170,7 @@ with col4:
     st.metric(
         label="🟢 NOMINAL",
         value=n_nom,
-        help="No alert — engine operating within expected parameters",
+        help="No alert - engine operating within expected parameters",
     )
 
 
@@ -245,7 +237,7 @@ if fleet_risk:
             "Short-history engines",
             n_padded,
             help="Engines with fewer cycles than the model's sequence length. "
-                 "Padded with repeated rows — predictions less reliable.",
+                 "Padded with repeated rows",
         )
 
     st.divider()
@@ -277,24 +269,24 @@ if not show_padded:
 
 # Sort: CRITICAL first, then WARNING, then MONITOR, then NOMINAL,
 # then by predicted RUL ascending (most urgent at top)
-tier_order   = {"CRITICAL": 0, "WARNING": 1, "MONITOR": 2, "NOMINAL": 3}
-filtered     = filtered.copy()
+tier_order = {"CRITICAL": 0, "WARNING": 1, "MONITOR": 2, "NOMINAL": 3}
+filtered = filtered.copy()
 filtered["tier_rank"] = filtered["alert_tier"].map(tier_order).fillna(4)
-filtered     = filtered.sort_values(["tier_rank", "pred_rul"]).drop(columns="tier_rank")
+filtered = filtered.sort_values(["tier_rank", "pred_rul"]).drop(columns="tier_rank")
 
-# Columns to display in the table — rename for readability
+# Columns to display in the table
 display_cols = {
-    "unit_number":     "Engine",
-    "alert_display":   "Alert",
-    "pred_rul":        "Predicted RUL",
-    "pred_std":        "Uncertainty (σ)",
-    "lower_90":        "90% PI Lower",
-    "upper_90":        "90% PI Upper",
-    "true_rul":        "True RUL",
+    "unit_number": "Engine",
+    "alert_display": "Alert",
+    "pred_rul": "Predicted RUL",
+    "pred_std": "Uncertainty (σ)",
+    "lower_90": "90% PI Lower",
+    "upper_90": "90% PI Upper",
+    "true_rul": "True RUL",
     "prob_failure_20": "P(fail<20)",
     "prob_failure_50": "P(fail<50)",
-    "residual":        "Residual",
-    "padded":          "Short history",
+    "residual": "Residual",
+    "padded": "Short history",
 }
 
 # Only include columns that actually exist in the data
@@ -323,7 +315,7 @@ event = st.dataframe(
     },
 )
 
-# ── Handle row selection → navigate to Engine Deep Dive ──────────────────────
+# Handle row selection navigation to Engine Deep Dive 
 if event.selection.rows:
     # event.selection.rows contains the row index in the displayed dataframe
     row_idx = event.selection.rows[0]
@@ -337,10 +329,7 @@ if event.selection.rows:
     st.switch_page("pages/2_Engine_Deep_Dive.py")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TABLE SUMMARY STATS — shown below the table
-# ─────────────────────────────────────────────────────────────────────────────
-
+# TABLE SUMMARY STATS 
 if not filtered.empty:
     st.caption(
         f"Showing **{len(filtered)}** engines  ·  "

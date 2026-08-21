@@ -1,7 +1,5 @@
 """
-dashboard/pages/3_Model_Performance.py
-
-Model Performance — cross-dataset evaluation results.
+Model Performance
 
 This page shows the technical validation of the trained models
 across all four CMAPSS datasets, including:
@@ -39,7 +37,7 @@ from utils.charts import (
 from utils.styles import DATASET_COLORS, CUSTOM_CSS, HEADER_HTML, SIGNATURE_HTML
 
 st.set_page_config(
-    page_title="Model Performance — Predictive Maintenance",
+    page_title="Model Performance - Predictive Maintenance",
     page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -60,28 +58,22 @@ with st.sidebar:
 
 st.title("Model Performance")
 st.caption(
-    "Evaluation on held-out test sets — models never saw these engines during training."
+    "Evaluation on held-out test sets"
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
 # DATA LOADING
-# ─────────────────────────────────────────────────────────────────────────────
 
-all_metrics  = load_all_metrics()
-all_cal      = load_all_calibration()
-all_bucket   = load_all_bucket_metrics()
-registry     = load_registry()
+all_metrics = load_all_metrics()
+all_cal = load_all_calibration()
+all_bucket = load_all_bucket_metrics()
+registry = load_registry()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # COMPARISON TABLE
-# ─────────────────────────────────────────────────────────────────────────────
 
-st.markdown("### Dataset Comparison — Last-Timestep Evaluation")
+st.markdown("### Dataset Comparison - Last-Timestep Evaluation")
 st.caption(
     "One prediction per engine at its final observed cycle. "
-    "This is the honest deployment metric — what the model would be asked "
-    "to do in real operation."
+
 )
 
 # Build summary rows from metrics_summary.json for all datasets
@@ -94,16 +86,16 @@ for ds in DATASETS:
     reg  = registry.get(ds, {}).get("champion", {})
 
     rows.append({
-        "Dataset":        ds,
-        "Backbone":       reg.get("backbone", "—").upper(),
-        "RMSE":           round(lt.get("rmse", 0), 2),
-        "MAE":            round(lt.get("mae", 0), 2),
-        "NASA Score":     round(lt.get("nasa_score", 0), 1),
+        "Dataset": ds,
+        "Backbone": reg.get("backbone", "—").upper(),
+        "RMSE": round(lt.get("rmse", 0), 2),
+        "MAE": round(lt.get("mae", 0), 2),
+        "NASA Score": round(lt.get("nasa_score", 0), 1),
         "Within 10 cyc": f"{lt.get('within_10_pct', 0)*100:.1f}%",
-        "AUC-20":         round(aseq.get("auc_failure_20", 0), 4)
+        "AUC-20": round(aseq.get("auc_failure_20", 0), 4)
                           if aseq.get("auc_failure_20") else "—",
-        "Coverage 90%":   round(cal.get(0.9, cal.get("0.9", 0)), 3),
-        "σ scale":        round(m.get("sigma_scale", 1.0), 4),
+        "Coverage 90%": round(cal.get(0.9, cal.get("0.9", 0)), 3),
+        "σ scale": round(m.get("sigma_scale", 1.0), 4),
     })
 
 compare_df = pd.DataFrame(rows)
@@ -113,18 +105,15 @@ def _color_rmse(val):
     """Green if RMSE ≤ 10, yellow ≤ 14, red otherwise."""
     if not isinstance(val, (int, float)):
         return ""
-    if val <= 10:   return "background-color: #D1FAE5; color: #065F46"
-    if val <= 14:   return "background-color: #FEF3C7; color: #92400E"
-    return              "background-color: #FEE2E2; color: #991B1B"
+    if val <= 10: return "background-color: #D1FAE5; color: #065F46"
+    if val <= 14: return "background-color: #FEF3C7; color: #92400E"
+    return  "background-color: #FEE2E2; color: #991B1B"
 
 styled = compare_df.style.applymap(_color_rmse, subset=["RMSE"])
 
 st.dataframe(styled, use_container_width=True, hide_index=True)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # KEY METRICS EXPLANATION
-# ─────────────────────────────────────────────────────────────────────────────
 
 with st.expander("What these metrics mean"):
     st.markdown("""
@@ -145,17 +134,13 @@ Above 0.90 = underconfident (intervals too wide).
 
 st.divider()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # CALIBRATION PLOTS
-# ─────────────────────────────────────────────────────────────────────────────
-
 st.markdown("### Calibration Plots")
 st.caption(
     "Each plot shows actual coverage vs expected coverage at six confidence levels. "
     "A perfectly calibrated model has all dots on the grey diagonal. "
-    "**Below the diagonal** = overconfident (intervals too narrow). "
-    "**Above the diagonal** = underconfident (intervals too wide)."
+    "**Below the diagonal** means intervals too narrow and model is overconfident. "
+    "**Above the diagonal** means intervals too wide and model is underconfident."
 )
 
 non_empty_cal = {ds: df for ds, df in all_cal.items() if not df.empty}
@@ -169,16 +154,12 @@ else:
 st.divider()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # BUCKET METRICS
-# ─────────────────────────────────────────────────────────────────────────────
-
 st.markdown("### RMSE by RUL Bucket")
 st.caption(
     "Prediction accuracy split into three zones: "
     "**Early life** (RUL > 80), **Mid life** (30–80), **End of life** (≤ 30). "
-    "End-of-life is where maintenance decisions are made — "
-    "the dramatic drop in RMSE there is the most operationally important result."
+    "End-of-life is where maintenance decisions are made."
 )
 
 non_empty_bkt = {ds: df for ds, df in all_bucket.items() if not df.empty}
@@ -195,10 +176,7 @@ if non_empty_bkt:
 
 st.divider()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # WITHIN-N AND AUC CHARTS
-# ─────────────────────────────────────────────────────────────────────────────
 
 perf_col1, perf_col2 = st.columns(2)
 
@@ -224,10 +202,7 @@ with perf_col2:
 
 st.divider()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # MODEL REGISTRY DETAILS
-# ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown("### Trained Model Configurations")
 
