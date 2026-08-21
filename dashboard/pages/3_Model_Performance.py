@@ -109,7 +109,7 @@ def _color_rmse(val):
     if val <= 14: return "background-color: #FEF3C7; color: #92400E"
     return  "background-color: #FEE2E2; color: #991B1B"
 
-styled = compare_df.style.applymap(_color_rmse, subset=["RMSE"])
+styled = compare_df.style.map(_color_rmse, subset=["RMSE"])
 
 st.dataframe(styled, use_container_width=True, hide_index=True)
 
