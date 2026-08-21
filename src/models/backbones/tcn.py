@@ -42,7 +42,10 @@ class TCNBackbone(nn.Module):
         # Build residual blocks sequentially
         for i in range(num_levels):
             dilation_size = 2 ** i
-            in_channels = input_dim if i == 0 else num_channels[i-1]
+            if i == 0 :
+                in_channels = input_dim 
+            else:
+                in_channels = num_channels[i-1]
             out_channels = num_channels[i]
             
             layers.append(

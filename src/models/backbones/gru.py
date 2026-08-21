@@ -12,7 +12,10 @@ class GRUBackbone(nn.Module):
             batch_first=True,
             bidirectional=bidirectional
         )
-        fc_input_dim = hidden_dim * 2 if bidirectional else hidden_dim
+        if bidirectional:
+            fc_input_dim = hidden_dim * 2
+        else:
+            fc_input_dim = hidden_dim
         self.head = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(fc_input_dim, output_dim)

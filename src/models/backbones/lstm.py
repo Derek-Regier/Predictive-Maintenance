@@ -18,7 +18,9 @@ class LSTMBackbone(nn.Module):
         )
         
         # Account for bidirectional output doubling the hidden dimension size
-        fc_input_dim = hidden_dim * 2 if bidirectional else hidden_dim
+        fc_input_dim = hidden_dim
+        if bidirectional:
+            fc_input_dim *= 2
         self.head = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(fc_input_dim, output_dim)
