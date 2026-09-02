@@ -119,27 +119,39 @@ class CDFCalibrator:
 
     def __init__(
         self,
-        iso: IsotonicRegression,
+        p_grid: np.ndarray,
+        q_grid: np.ndarray,
         n_cal: int,
         dataset_key: str,
         sigma_scale: float,
     ) -> None:
-        self.iso = iso
+        """
+        The calibrator holds a MONOTONE LOOKUP GRID, not the fitted
+        IsotonicRegression object.
+
+        That is deliberate. Persisting the sklearn estimator would tie the
+        saved artifact to a class path and to a sklearn version, and it bit
+        immediately: the first version pickled `self` from inside
+        `__main__`, so the pickle recorded the class as
+        `__main__.CDFCalibrator` and every later `from calibration import
+        CDFCalibrator` failed to unpickle it. Storing two float arrays
+        removes the whole class of problem — the artifact is pure numpy and
+        `load()` does not need sklearn at all.
+
+        The grid is a piecewise-linear reading of the isotonic step
+        function at 2001 points, so it agrees with the exact estimator to
+        ~5e-4 in probability. Both directions of the map use the same
+        array, which guarantees `transform_prob` and `inverse_prob` are
+        exact inverses of each other.
+        """
+        self._p_grid = np.asarray(p_grid, dtype=np.float64)
+        self._q_grid = np.asarray(q_grid, dtype=np.float64)
         self.n_cal = int(n_cal)
         self.dataset_key = dataset_key
         # Recorded so a loaded calibrator can be checked against the
         # sigma_scale it was fitted under. If sigma_scale is later refitted
         # without refitting this, the two corrections stack incorrectly.
         self.sigma_scale = float(sigma_scale)
-
-        # Precompute the forward map on a grid, then invert by interpolation.
-        # Isotonic output is non-decreasing but can be flat; np.interp needs a
-        # strictly increasing x to invert unambiguously, so add a negligible
-        # ramp that breaks ties without moving anything by a meaningful amount.
-        self._p_grid = np.linspace(0.0, 1.0, _GRID_N)
-        q = np.asarray(self.iso.predict(self._p_grid), dtype=np.float64)
-        q = np.clip(q, 0.0, 1.0)
-        self._q_grid = np.maximum.accumulate(q) + np.linspace(0, 1e-9, _GRID_N)
 
     # ---- fitting ---------------------------------------------------------
 
@@ -151,6 +163,7 @@ class CDFCalibrator:
         sigma: np.ndarray,
         dataset_key: str,
         sigma_scale: float = 1.0,
+        exclude_censored_at: float | None = None,
     ) -> "CDFCalibrator":
         """
         Fit the recalibration map.
@@ -169,6 +182,35 @@ class CDFCalibrator:
         mu = np.asarray(mu, dtype=np.float64)
         sigma = np.clip(np.asarray(sigma, dtype=np.float64), 1e-8, None)
 
+        # Censored windows: those whose target sits exactly at max_rul.
+        #
+        # These are not observations of remaining life — they are a
+        # constant, and the model predicts close to that constant, so their
+        # PIT values pile up in the middle of [0,1]. On FD004 they are 62%
+        # of all windows, which means a map fitted on the full set spends
+        # most of its capacity correcting an artefact of the RUL cap rather
+        # than correcting the model. Excluding them yields a map that
+        # describes the predictive distribution where the target is real.
+        #
+        # This is left OFF by default. Turning it on makes the calibrator
+        # honest about the model but mismatched against a test set that is
+        # itself 62% censored, so the headline coverage number will look
+        # worse while the uncensored one improves. Which you want depends
+        # on whether the report is about the benchmark or about the model —
+        # worth being explicit about that in a writeup rather than picking
+        # one silently.
+        n_before = len(y_true)
+        if exclude_censored_at is not None:
+            keep = y_true < exclude_censored_at
+            if keep.sum() < 200:
+                print(f"    Warning: only {int(keep.sum())} uncensored windows; "
+                      f"keeping all {n_before} instead.")
+            else:
+                y_true, mu, sigma = y_true[keep], mu[keep], sigma[keep]
+                print(f"    Excluded {n_before - int(keep.sum()):,} censored "
+                      f"windows (target == {exclude_censored_at:g}); "
+                      f"fitting on {int(keep.sum()):,}.")
+
         # PIT values: where each observation fell in its own predicted CDF
         u = norm.cdf(y_true, loc=mu, scale=sigma)
 
@@ -182,7 +224,17 @@ class CDFCalibrator:
         )
         iso.fit(u_sorted, emp)
 
-        return cls(iso, n_cal=n, dataset_key=dataset_key, sigma_scale=sigma_scale)
+        # Read the fitted step function onto a grid and keep only that.
+        # Isotonic output is non-decreasing but can be flat; np.interp needs
+        # a strictly increasing array to invert unambiguously, so add a
+        # negligible ramp that breaks ties without moving anything by a
+        # meaningful amount.
+        p_grid = np.linspace(0.0, 1.0, _GRID_N)
+        q = np.clip(np.asarray(iso.predict(p_grid), dtype=np.float64), 0.0, 1.0)
+        q_grid = np.maximum.accumulate(q) + np.linspace(0.0, 1e-9, _GRID_N)
+
+        return cls(p_grid, q_grid, n_cal=n,
+                   dataset_key=dataset_key, sigma_scale=sigma_scale)
 
     # ---- applying --------------------------------------------------------
 
@@ -196,7 +248,8 @@ class CDFCalibrator:
         """
         scalar = np.isscalar(p)
         p_arr = np.atleast_1d(np.asarray(p, dtype=np.float64))
-        out = np.clip(self.iso.predict(np.clip(p_arr, 0.0, 1.0)), 0.0, 1.0)
+        out = np.interp(np.clip(p_arr, 0.0, 1.0), self._p_grid, self._q_grid)
+        out = np.clip(out, 0.0, 1.0)
         return float(out[0]) if scalar else out
 
     def inverse_prob(self, q) -> np.ndarray | float:
@@ -270,12 +323,60 @@ class CDFCalibrator:
 
     # ---- persistence -----------------------------------------------------
 
+    # Bumped whenever the on-disk layout changes, so a stale artifact fails
+    # loudly with a message instead of silently misbehaving.
+    STATE_VERSION = 1
+
+    def to_state(self) -> dict:
+        """Plain-data representation — numpy arrays and scalars only."""
+        return {
+            "__type__": "CDFCalibrator",
+            "version": self.STATE_VERSION,
+            "p_grid": self._p_grid,
+            "q_grid": self._q_grid,
+            "n_cal": self.n_cal,
+            "dataset_key": self.dataset_key,
+            "sigma_scale": self.sigma_scale,
+        }
+
     def save(self, path: Path) -> None:
-        joblib.dump(self, Path(path))
+        """
+        Persist as a dict, NOT as `self`.
+
+        Pickling the instance records its class by import path. When this
+        file is run as a script that path is `__main__`, so the artifact
+        could only ever be loaded by another `__main__` — importing the
+        class normally raised
+        `AttributeError: module '__main__' has no attribute 'CDFCalibrator'`.
+        Serialising state rather than the object sidesteps that entirely and
+        also decouples the artifact from the sklearn version.
+        """
+        joblib.dump(self.to_state(), Path(path))
+
+    @classmethod
+    def from_state(cls, state: dict) -> "CDFCalibrator":
+        if not isinstance(state, dict) or state.get("__type__") != "CDFCalibrator":
+            raise ValueError(
+                "This calibrator file was written by an older version that "
+                "pickled the object itself. Delete it and re-run:\n"
+                "    python src/inference/calibration.py --dataset all"
+            )
+        if state.get("version") != cls.STATE_VERSION:
+            raise ValueError(
+                f"Calibrator state version {state.get('version')} does not match "
+                f"the expected {cls.STATE_VERSION}. Re-run "
+                f"src/inference/calibration.py."
+            )
+        return cls(
+            state["p_grid"], state["q_grid"],
+            n_cal=state["n_cal"],
+            dataset_key=state["dataset_key"],
+            sigma_scale=state["sigma_scale"],
+        )
 
     @staticmethod
     def load(path: Path) -> "CDFCalibrator":
-        return joblib.load(Path(path))
+        return CDFCalibrator.from_state(joblib.load(Path(path)))
 
 
 # ==========================================================================
@@ -301,7 +402,8 @@ def _create_sequences(df: pd.DataFrame, seq_length: int):
     return torch.tensor(np.array(X_seq), dtype=torch.float32), np.array(y)
 
 
-def fit_for_dataset(dataset_key: str, registry_path: Path) -> None:
+def fit_for_dataset(dataset_key: str, registry_path: Path,
+                    exclude_censored: bool = False) -> None:
     """
     Fit the recalibrator on the VALIDATION split and register it.
 
@@ -351,7 +453,22 @@ def fit_for_dataset(dataset_key: str, registry_path: Path) -> None:
     mu = np.asarray(dist.loc, dtype=np.float64)
     sigma = np.asarray(dist.scale, dtype=np.float64) * sigma_scale
 
-    cal = CDFCalibrator.fit(y_val, mu, sigma, dataset_key, sigma_scale)
+    # Read max_rul so the censoring diagnostic below has something to
+    # report. Set exclude_censored_at=max_rul in the fit call to build the
+    # uncensored-only variant instead (see CDFCalibrator.fit).
+    ds_cfg_path = _ROOT / "config" / "datasets.yaml"
+    max_rul = None
+    if ds_cfg_path.exists():
+        with open(ds_cfg_path, "r") as f:
+            max_rul = (yaml.safe_load(f) or {}).get(dataset_key, {}).get("max_rul")
+
+    if max_rul is not None:
+        n_cens = int((y_val >= max_rul).sum())
+        print(f"  Censored windows in the calibration set: {n_cens:,} / "
+              f"{len(y_val):,} ({n_cens/len(y_val):.1%}) at the cap of {max_rul:g}")
+
+    cal = CDFCalibrator.fit(y_val, mu, sigma, dataset_key, sigma_scale,
+                            exclude_censored_at=(max_rul if exclude_censored else None))
 
     # Report before/after coverage ON THE CALIBRATION SET. These will look
     # excellent by construction — the map was fitted here. The number that
@@ -386,6 +503,8 @@ def fit_for_dataset(dataset_key: str, registry_path: Path) -> None:
         "fitted_on": "validation",
         "n_calibration_windows": int(cal.n_cal),
         "sigma_scale_at_fit": sigma_scale,
+        "excluded_censored": bool(exclude_censored),
+        "max_rul": max_rul,
     }
     save_registry(registry_path, current)
     print(f"  Registry updated -> cdf_calibrator registered for {dataset_key}")
@@ -398,6 +517,15 @@ if __name__ == "__main__":
     parser.add_argument("--dataset",
                         choices=["FD001", "FD002", "FD003", "FD004", "all"],
                         default="all")
+    parser.add_argument(
+        "--exclude-censored", action="store_true",
+        help=("Fit the map only on windows whose true RUL is below max_rul. "
+              "Between 27%% (FD001) and 62%% (FD004) of windows sit exactly at "
+              "the cap, where the target is a constant rather than a remaining "
+              "life; including them makes the map correct the cap instead of "
+              "the model. Measured effect of NOT excluding them: marginal "
+              "coverage error improves, uncensored coverage error gets worse "
+              "on all four datasets."))
     args = parser.parse_args()
 
     registry_path = _ROOT / "config" / "model_registry.yaml"
@@ -408,5 +536,11 @@ if __name__ == "__main__":
     print("Corrects the SHAPE of the predictive distribution; sigma_scale only")
     print("corrects its width and can fix exactly one quantile level.")
 
+    if args.exclude_censored:
+        print("Fitting on UNCENSORED windows only (true RUL < max_rul).")
+    else:
+        print("Fitting on all windows, censored included "
+              "(pass --exclude-censored to change).")
+
     for ds in datasets:
-        fit_for_dataset(ds, registry_path)
+        fit_for_dataset(ds, registry_path, exclude_censored=args.exclude_censored)

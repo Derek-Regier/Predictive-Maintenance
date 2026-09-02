@@ -51,19 +51,114 @@ DATASET_COLORS = {
 
 # Health index colours 
 
+# Two families, deliberately kept visually distinct:
+#   - Geometry indices (latent space)  -> cool tones, indigo through teal
+#   - Reconstruction / input space     -> warm red
+#   - Self-referenced variants         -> same hue as their fleet-referenced
+#     counterpart but a lighter tint, so a chart showing both reads as
+#     "same quantity, different reference point"
+
 HEALTH_COLORS = {
-    "recon_error": "#EF4444",
-    "kl_div":      "#8B5CF6",
-    "js_div":      "#06B6D4",
-    "wasserstein": "#F97316",
+    # Reconstruction (input space)
+    "recon_error":        "#EF4444",
+
+    # Fleet-referenced geometry (latent space)
+    "mahalanobis":        "#4F46E5",
+    "fisher_rao":         "#0D9488",
+    "kl_div":             "#8B5CF6",
+    "js_div":             "#06B6D4",
+    "wasserstein":        "#F97316",
+
+    # Self-referenced geometry (engine's own baseline)
+    "mahalanobis_self":   "#818CF8",
+    "fisher_rao_self":    "#5EEAD4",
+
+    # Derived
+    "latent_mu_norm":     "#64748B",
+    "latent_mu_centered": "#334155",
+    "health_score":       "#16A34A",
 }
 
 HEALTH_LABELS = {
-    "recon_error": "Reconstruction Error",
-    "kl_div": "KL Divergence",
-    "js_div": "JS Divergence",
-    "wasserstein": "Wasserstein Distance",
+    "recon_error":        "Reconstruction Error",
+    "mahalanobis":        "Mahalanobis (fleet)",
+    "fisher_rao":         "Fisher-Rao (fleet)",
+    "kl_div":             "KL Divergence",
+    "js_div":             "JS Divergence",
+    "wasserstein":        "Bures-Wasserstein",
+    "mahalanobis_self":   "Mahalanobis (self)",
+    "fisher_rao_self":    "Fisher-Rao (self)",
+    "latent_mu_norm":     "Latent norm (raw)",
+    "latent_mu_centered": "Latent norm (centred)",
+    "health_score":       "Health Score",
 }
+
+# One-line explanation of each index, shown in dashboard tooltips and the
+# methodology expander. Kept next to the labels so the two never drift apart.
+
+HEALTH_DESCRIPTIONS = {
+    "recon_error":
+        "How poorly the decoder reproduces the window. Input-space signal, so "
+        "it does not depend on the latent space being well behaved. Measured "
+        "across all four datasets it trends the right way on 53% of engines "
+        "- a coin flip - so it is kept as an independent cross-check rather "
+        "than as a primary degradation indicator.",
+    "mahalanobis":
+        "Distance from the healthy fleet mean, whitened by the healthy "
+        "covariance. Discounts directions healthy engines naturally vary in.",
+    "fisher_rao":
+        "Geodesic distance on the Gaussian manifold under the Fisher "
+        "information metric - a true metric, not a divergence.",
+    "kl_div":
+        "KL(current posterior || healthy population). Asymmetric: how "
+        "surprising this window is under the healthy model. CAUTION: its "
+        "sign flips across datasets (strongly correct on FD003, strongly "
+        "backwards on FD001), because it is dominated by the log-det term "
+        "and therefore tracks posterior width rather than mean shift. Not "
+        "trustworthy as a standalone health index.",
+    "js_div":
+        "Symmetrised KL against the healthy population. Use when the "
+        "direction of the comparison should not matter.",
+    "wasserstein":
+        "Squared Bures-Wasserstein distance. No division or logarithm, so it "
+        "is the most numerically forgiving of the geometry indices.",
+    "mahalanobis_self":
+        "The same whitened distance, measured from this engine's own earliest "
+        "observed state. Removes unit-to-unit offset.",
+    "fisher_rao_self":
+        "Fisher-Rao distance from this engine's own baseline encoding.",
+    "latent_mu_norm":
+        "Raw L2 norm of the encoded mean. Diagnostic only - a large constant "
+        "value here means the encoder is barely responding to its input.",
+    "latent_mu_centered":
+        "L2 norm of (mu - mu_ref): the healthy offset removed, but without "
+        "whitening. Shows what Mahalanobis adds over plain Euclidean.",
+    "health_score":
+        "0-100, from the empirical CDF of healthy Mahalanobis distances. "
+        "100 means indistinguishable from healthy.",
+}
+
+# Which indices are geometry (latent space) vs reconstruction (input space).
+# Used to group charts, legends and selector defaults.
+
+GEOMETRY_INDICES = [
+    "mahalanobis", "fisher_rao", "kl_div", "js_div", "wasserstein",
+    "mahalanobis_self", "fisher_rao_self",
+]
+RECONSTRUCTION_INDICES = ["recon_error"]
+
+# Indices where a HIGHER value means HEALTHIER (everything else is the other
+# way round). Charts use this to pick colour-scale direction and expected sign.
+HIGHER_IS_HEALTHIER = {"health_score"}
+
+# Health score bands - (lower, upper, colour, label). Upper bound is
+# exclusive except on the last band, which includes 100.
+SCORE_BANDS = [
+    (0,  25,  "#DC2626", "Critical"),
+    (25, 50,  "#D97706", "Degraded"),
+    (50, 75,  "#2563EB", "Monitor"),
+    (75, 101, "#16A34A", "Nominal"),
+]
 
 # Chart sizing 
 

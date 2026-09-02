@@ -7,19 +7,48 @@ like. At inference, deviations between the current encoding and the
 healthy reference distribution become the health indices used by
 health_monitor.py.
 
-Two artefacts are built from the healthy training data after training:
+Three artefacts are built after training:
 
-  healthy_reference — per-cluster (mu_ref, sigma_ref): the mean encoded
-                      distribution of healthy engine windows. Used as
-                      the comparison point for KL/JS/Wasserstein distances.
+  healthy_reference — per-cluster FULL-COVARIANCE Gaussian describing the
+                      region of latent space healthy windows occupy:
+                      {mu, sigma, cov, cov_inv, cov_sqrt, cov_logdet}.
+                      Built on healthy TRAINING windows.
 
-  drift_thresholds  — per-cluster reconstruction error at mean + 2σ.
-                      Reconstruction error above this on new data signals
-                      the engine is outside the healthy distribution.
+  calibration       — drift and geometry alarm thresholds, plus the
+                      empirical healthy Mahalanobis quantile grid used
+                      to map raw distances onto a 0-100 health score.
+                      Built on healthy VALIDATION windows.
+
+  diagnostics       — per-dimension KL and active-unit count, so we can
+                      tell at a glance whether the latent space is alive.
 
 seq_length and input_dim are read from the champion backbone config in
 model_registry.yaml so the VAE uses the same window size as the
 predictive model (needed for cycle numbers to line up in the dashboard).
+
+WHAT CHANGED IN THIS REVISION
+-----------------------------
+1. The healthy reference is now the COVARIANCE OF HEALTHY ENCODINGS, not
+   the average posterior sigma. Those are different objects: the old one
+   measured "how uncertain is the encoder about one window", the new one
+   measures "how much do healthy windows differ from each other". Only
+   the second is a sensible yardstick for anomaly, and using the first
+   is why every geometry metric came out at ~1e-5.
+
+2. Thresholds are calibrated on healthy VALIDATION windows, not
+   training windows. Training-set reconstruction error is optimistically
+   low, so a threshold fitted there fires constantly on anything else.
+   This also matches the project's standing rule: validation is for
+   optimisation and calibration, the test set stays untouched.
+
+3. Thresholds are QUANTILES, not mean + 2*sigma. Reconstruction errors
+   are right-skewed, so mean + 2*sigma does not correspond to the ~97.5%
+   coverage the old docstring claimed. A quantile makes no distributional
+   assumption and means exactly what it says.
+
+4. Posterior diagnostics (active units, per-dimension KL) are computed
+   and written to the registry, so a collapsed run is visible
+   immediately rather than being inferred from a val-loss number.
 
 Usage
 -----
@@ -45,12 +74,14 @@ from torch.utils.data import DataLoader, TensorDataset
 _ROOT = Path(__file__).resolve().parents[2]
 _TRAINING = _ROOT / "src" / "training"
 _MODELS = _ROOT / "src" / "models"
-for _p in [str(_TRAINING), str(_MODELS)]:
+_HEALTH = _ROOT / "src" / "health"
+for _p in [str(_TRAINING), str(_MODELS), str(_HEALTH)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 from shared import DEVICE, NON_FEATURE_COLS, TARGET_COL, load_registry, save_registry, split_by_engine
-from vae import VAE, vae_loss
+from vae import VAE, vae_loss, posterior_diagnostics
+from geometry import build_reference_matrices, mahalanobis
 
 
 # Sequence building with cluster tracking
@@ -95,11 +126,17 @@ def create_health_sequences(df: pd.DataFrame, seq_length: int) -> tuple[torch.Te
 
 def get_beta(epoch: int, max_epochs: int, target_beta: float, warmup_fraction: float = 0.2) -> float:
     """
-    Linearly ramp β from 0 to target_beta over the first warmup_fraction of
-    training, then hold at target_beta. Without this, an early KL term
-    dominates before the decoder has learned anything, forcing the encoder
-    to collapse to N(0,I) ("posterior collapse"). Starting near 0 lets the
-    encoder/decoder learn real structure before regularisation kicks in.
+    Linearly ramp beta from 0 to target_beta over the first
+    warmup_fraction of training, then hold at target_beta. Without this,
+    an early KL term dominates before the decoder has learned anything,
+    forcing the encoder to collapse to N(0,I) ("posterior collapse").
+    Starting near 0 lets the encoder/decoder learn real structure before
+    regularisation kicks in.
+
+    This was already correct — but it was fighting an effective beta
+    inflated by seq_length * input_dim from the loss reduction mismatch
+    in vae.py, so it never had a chance. With that fixed, the warm-up
+    does what it is supposed to.
     """
     warmup_epochs = max(1, int(max_epochs * warmup_fraction))
     if epoch < warmup_epochs:
@@ -108,7 +145,7 @@ def get_beta(epoch: int, max_epochs: int, target_beta: float, warmup_fraction: f
 
 
 # ============================================================
-# Healthy Reference + Drift Thresholds
+# Healthy Reference + Calibration
 # ============================================================
 #
 # The VAE is being used here as a HEALTH MONITOR rather than
@@ -118,29 +155,29 @@ def get_beta(epoch: int, max_epochs: int, target_beta: float, warmup_fraction: f
 #
 #   1. Take data representing healthy engine behavior.
 #   2. Pass that data through the trained VAE.
-#   3. Establish what "healthy" looks like in latent space.
-#   4. Establish how much reconstruction error is normal.
+#   3. Establish what "healthy" looks like in latent space —
+#      as a REGION (mean + covariance), not a point.
+#   4. Establish how far outside that region is normal.
 #   5. Later, compare new engine data against these references.
 #
-# This gives us two different ways to detect abnormal behavior:
+# This gives us two independent ways to detect abnormal behavior:
 #
-#   - Latent-space distance:
-#       KL / JS / Wasserstein
+#   - Latent-space distance (Mahalanobis / KL / Bures-Wasserstein /
+#     Fisher-Rao) — measured in the geometry of the healthy fleet
 #
-#   - Reconstruction error:
-#       How poorly can the VAE reconstruct this data?
+#   - Reconstruction error — how poorly the VAE reproduces the input
 #
 # Operating clusters are kept separate because engines operating
 # under different conditions may naturally have different behavior.
-# We therefore do not necessarily want one global definition of
-# "healthy" for every operating condition.
+# We therefore do not want one global definition of "healthy" for
+# every operating condition.
 
 
 def _encode_batched(
     vae: VAE,
     X: torch.Tensor,
     batch: int = 256
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Encode a collection of input sequences through the VAE.
 
@@ -154,285 +191,222 @@ def _encode_batched(
     We convert logvar into sigma (standard deviation) because
     the downstream geometry calculations expect mu and sigma.
 
-    The data is processed in batches rather than all at once so
-    that a large number of sequences does not have to fit into
-    GPU memory simultaneously.
+    Returns (mu, sigma, logvar) — logvar is returned as well so the
+    caller can feed it straight to posterior_diagnostics() without
+    re-encoding.
 
-    Parameters
-    ----------
-    vae:
-        The already-trained VAE.
-
-    X:
-        Tensor containing the sequences that should be encoded.
-        Expected shape is approximately:
-
-            (number_of_samples, sequence_length, features)
-
-    batch:
-        Number of sequences processed at once.
-
-    Returns
-    -------
-    mu:
-        Latent means with shape:
-
-            (N, latent_dim)
-
-    sigma:
-        Latent standard deviations with shape:
-
-            (N, latent_dim)
-
-    These two arrays describe where each input sequence lies in
-    the VAE's latent probability space.
+    Processed in batches so a large number of sequences does not have to
+    fit into GPU memory simultaneously. shuffle=False matters: the
+    encoded outputs must stay in the same order as X, because
+    cluster_ids[i] has to keep referring to the same sample.
     """
+    loader = DataLoader(TensorDataset(X), batch_size=batch, shuffle=False)
 
-    # DataLoader lets us process X in manageable batches instead
-    # of sending the entire dataset through the VAE at once.
-    #
-    # shuffle=False is important because we want the encoded
-    # outputs to remain in exactly the same order as X.
-    loader = DataLoader(
-        TensorDataset(X),
-        batch_size=batch,
-        shuffle=False
-    )
-
-    mus, sigs = [], []
-
-    # Put the VAE into evaluation mode.
-    # This ensures layers such as dropout behave consistently
-    # during encoding.
+    mus, sigs, logvars = [], [], []
     vae.eval()
 
-    # We are only extracting information from the trained model.
-    # No gradients are required, which saves memory and computation.
     with torch.no_grad():
-
-        # Process the input sequences batch by batch.
         for (x_batch,) in loader:
-
-            # Encode the batch.
-            #
-            # mu describes the center of the latent distribution.
-            # logvar describes its variance in logarithmic form.
             mu, logvar = vae.encode(x_batch.to(DEVICE))
-
-            # Move the results back to CPU and convert them to
-            # NumPy arrays so they can be used by the geometry code.
             mus.append(mu.cpu().numpy())
+            # variance = exp(logvar); sigma = sqrt(variance) = exp(0.5 * logvar)
+            sigs.append(torch.exp(0.5 * logvar).cpu().numpy())
+            logvars.append(logvar.cpu().numpy())
 
-            # The VAE gives us log(variance), but geometry.py
-            # expects standard deviation.
-            #
-            # variance = exp(logvar)
-            # sigma    = sqrt(variance)
-            #          = exp(0.5 * logvar)
-            sigs.append(
-                torch.exp(0.5 * logvar).cpu().numpy()
-            )
-
-    # Each batch produced one NumPy array.
-    # concatenate() combines all batches back into one array.
-    #
-    # The original ordering is preserved because shuffle=False.
-    return np.concatenate(mus), np.concatenate(sigs)
+    return np.concatenate(mus), np.concatenate(sigs), np.concatenate(logvars)
 
 
-def build_healthy_reference(vae: VAE, healthy_X: torch.Tensor, cluster_ids: np.ndarray, n_clusters: int) -> dict[int, dict]:
-    """
-    Build a reference representation of "healthy" engine behavior.
+def _recon_errors_batched(vae: VAE, X: torch.Tensor, batch: int = 256) -> np.ndarray:
+    """Per-window reconstruction error for every sequence in X. Returns (N,)."""
+    loader = DataLoader(TensorDataset(X), batch_size=batch, shuffle=False)
+    errors = []
+    vae.eval()
+    with torch.no_grad():
+        for (x_batch,) in loader:
+            errors.append(vae.reconstruction_error(x_batch.to(DEVICE)).cpu().numpy())
+    return np.concatenate(errors) if errors else np.array([])
 
-    The reference is calculated separately for every operating
-    cluster.
-    For each cluster:
-        healthy sequences
-              |
-              v
-            VAE
-              |
-              v
-        latent mu/sigma
-              |
-              v
-        average across healthy samples
-              |
-              v
-       healthy reference
-    Later, when a new engine is observed, its latent distribution
-    can be compared against the reference for its operating cluster.
 
-    This is important because an engine operating under one set of
-    conditions may naturally produce a different latent distribution
-    than an engine operating under another set of conditions.
-
-    Parameters:
-    vae:
-        Trained VAE used to encode the healthy data.
-
-    healthy_X:
-        Sequences representing healthy engine behavior.
-
-    cluster_ids:
-        Operating-condition cluster assigned to each sequence in
-        healthy_X.
-
-    n_clusters:
-        Total number of operating-condition clusters.
-
-    Returns
-    reference:
-        Dictionary indexed by operating cluster.
-
-        Example:
-
-            reference[2]["mu"]
-            reference[2]["sigma"]
-
-        represent the average latent distribution for healthy
-        samples belonging to cluster 2.
-    """
-
-    # Encode every healthy sequence into latent-space parameters.
-    # mu_all[i] and sigma_all[i] describe the latent distribution
-    # produced by healthy sequence i.
-    mu_all, sigma_all = _encode_batched(vae, healthy_X)
-
-    reference = {}
-
-    # Build a separate healthy reference for each operating cluster.
-    for c in range(n_clusters):
-
-        # Select only the healthy samples belonging to this cluster.
-        mask = cluster_ids == c
-
-        # If there are no healthy samples in this cluster, we cannot
-        # calculate a meaningful cluster-specific reference.
-        if mask.sum() == 0:
-            continue
-
-        # Average the latent distributions of all healthy samples
-        # belonging to this operating condition.
-        #
-        # This gives us a representative point/distribution describing
-        # what "healthy" looks like for this particular cluster.
-        reference[c] = {
-            "mu": mu_all[mask].mean(axis=0),
-            "sigma": sigma_all[mask].mean(axis=0)
-        }
-    # Fallback handling
-    # It is possible that some clusters contain no healthy samples.
-    # Without a fallback, attempting to monitor an engine assigned
-    # to one of those clusters would fail because no reference exists.
-    # We therefore reuse an existing reference.
-    # NOTE for future edit:
-    # The comment currently says "nearest cluster reference", but
-    # the code does NOT actually calculate the nearest cluster.
-    # It simply takes the first available reference.
-    if reference:
-
-        # Take the first available reference as the fallback.
-        any_ref = next(iter(reference.values()))
-        for c in range(n_clusters):
-            if c not in reference:
-                # copy() prevents the missing cluster from sharing
-                # the exact same mutable NumPy arrays.
-                reference[c] = {
-                    "mu": any_ref["mu"].copy(),
-                    "sigma": any_ref["sigma"].copy()
-                }
-                print(f" Warning: cluster {c} has no healthy samples - using nearest cluster reference.")
-    return reference
-
-def build_drift_thresholds(
+def build_healthy_reference(
     vae: VAE,
     healthy_X: torch.Tensor,
     cluster_ids: np.ndarray,
-    n_clusters: int
+    n_clusters: int,
+    ridge: float = 1e-6,
+) -> dict[int, dict]:
+    """
+    Build a reference REGION of healthy engine behaviour, per operating
+    cluster.
+
+        healthy sequences
+              |
+              v
+            VAE encoder
+              |
+              v
+        latent mu/sigma per window
+              |
+              v
+        mean AND covariance across healthy windows
+              |
+              v
+        healthy reference N(mu_ref, Sigma_ref)
+
+    The covariance is the important part. It describes which directions
+    in latent space healthy engines naturally vary along, which lets
+    Mahalanobis distance discount benign variation and amplify the
+    directions healthy engines never move in. Without it, every distance
+    is Euclidean and the degradation signal — which in the collapsed run
+    was a perturbation of size ~0.02 on a vector of norm ~22.75 — gets
+    swamped.
+
+    Returns {cluster_id: reference_dict}, where reference_dict has the
+    keys documented in geometry.build_reference_matrices().
+    """
+    mu_all, sigma_all, _ = _encode_batched(vae, healthy_X)
+
+    reference: dict[int, dict] = {}
+    latent_dim = mu_all.shape[1]
+
+    for c in range(n_clusters):
+        mask = cluster_ids == c
+        n_c = int(mask.sum())
+
+        # A full covariance in latent_dim dimensions needs meaningfully
+        # more than latent_dim samples to be anything but noise. Below
+        # that, build_reference_matrices falls back to a diagonal
+        # estimate, but it is worth flagging loudly.
+        if n_c == 0:
+            continue
+        if n_c <= latent_dim:
+            print(f"    Warning: cluster {c} has only {n_c} healthy windows "
+                  f"for a {latent_dim}-dim covariance — estimate will be diagonal-only.")
+
+        reference[c] = build_reference_matrices(
+            mu_all[mask], sigma_all[mask], ridge=ridge
+        )
+
+    # Fallback handling.
+    # Some clusters may contain no healthy samples at all. Without a
+    # fallback, monitoring an engine assigned to one of those clusters
+    # would fail because no reference exists.
+    #
+    # NOTE this picks the FIRST available reference, not the nearest one.
+    # Doing it properly would mean measuring distance between cluster
+    # centroids in operating-condition space and copying the closest.
+    # Left as-is deliberately: it only triggers on datasets where a whole
+    # operating condition has no healthy data, which does not happen on
+    # FD001-FD004 at the default RUL>80 threshold.
+    if reference:
+        any_c = next(iter(reference))
+        for c in range(n_clusters):
+            if c not in reference:
+                reference[c] = {k: (v.copy() if isinstance(v, np.ndarray) else v)
+                                for k, v in reference[any_c].items()}
+                print(f"    Warning: cluster {c} has no healthy samples — "
+                      f"copying cluster {any_c}'s reference.")
+
+    return reference
+
+
+def build_calibration(
+    vae: VAE,
+    healthy_val_X: torch.Tensor,
+    val_cluster_ids: np.ndarray,
+    reference: dict[int, dict],
+    n_clusters: int,
+    drift_quantile: float = 0.99,
+    geo_quantile: float = 0.99,
 ) -> dict:
     """
-    Calculate reconstruction-error thresholds for detecting drift.
-    The VAE attempts to reconstruct its input.
+    Calibrate alarm thresholds on HEALTHY VALIDATION windows.
 
-    For healthy data, we expect reconstruction error to generally
-    remain within a normal range.
-    The threshold is currently defined as:
-        mean reconstruction error + 2 * standard deviation
+    Why validation rather than training:
+        The model has already fit the training windows, so their
+        reconstruction error is optimistically low. A threshold set
+        there is systematically too tight and fires on almost
+        everything, which is what produced the old behaviour of 87 of 92
+        engines flagged as drifted with a median first-drift RUL sitting
+        at the 125 cap — i.e. flagging on the very first window.
 
-    This is calculated separately for each operating cluster.
-    Later, when new data is processed:
-        reconstruction error > threshold
-                    |
-                    v
-              possible drift
+    Why a quantile rather than mean + 2*sigma:
+        mean + 2*sigma only corresponds to ~97.5% coverage if the errors
+        are Gaussian. Reconstruction errors are bounded below by zero and
+        right-skewed, so they are not. An empirical quantile makes no
+        distributional assumption: the 0.99 quantile of healthy error is,
+        by construction, exceeded by 1% of healthy windows.
 
-    A global threshold is also calculated as a fallback.
+    Also stores the empirical CDF grid of healthy Mahalanobis distances,
+    which health_monitor.py uses to map a raw distance onto a 0-100
+    health score. Under a Gaussian model d_M^2 would be chi-squared with
+    latent_dim degrees of freedom; the empirical grid is used instead
+    because latent encodings are not exactly Gaussian and it costs
+    nothing to be honest about that.
 
-    IMPORTANT:
-    mean + 2σ corresponds to approximately 97.5% coverage only
-    under a roughly Gaussian / symmetric error distribution.
-    Reconstruction errors do not necessarily follow a Gaussian
-    distribution, so this assumption should eventually be tested.
+    Returns a dict with per-cluster and global entries:
+        drift_thresholds     {cluster: float, "global": float}
+        geo_thresholds       {cluster: float, "global": float}
+        maha_quantile_grid   {cluster: [201 values], "global": [...]}
+        quantile_levels      the 201 probability levels the grid maps to
     """
+    if len(healthy_val_X) == 0:
+        print("    Warning: no healthy validation windows — falling back to "
+              "training-set calibration. Thresholds will be optimistic.")
+        return {}
 
-    # Process the healthy sequences in batches for the same reason
-    # as _encode_batched(): avoid loading the entire dataset through
-    # the model at once.
-    loader = DataLoader(TensorDataset(healthy_X), batch_size=256, shuffle=False)
+    recon = _recon_errors_batched(vae, healthy_val_X)
+    mu_val, sigma_val, _ = _encode_batched(vae, healthy_val_X)
 
-    errors = []
-    # Evaluation mode ensures deterministic model behavior.
-    vae.eval()
-    # We are measuring the trained model, not training it.
-    # Therefore gradients are unnecessary.
-    with torch.no_grad():
+    levels = np.linspace(0.0, 1.0, 201)
 
-        for (x_batch,) in loader:
-            # Calculate how well the VAE reconstructs each sequence.
-            # The result should contain one reconstruction-error value
-            # for each sample in the batch.
-            batch_errors = vae.reconstruction_error(x_batch.to(DEVICE))
+    drift_thresholds: dict = {}
+    geo_thresholds: dict = {}
+    maha_grid: dict = {}
 
-            # Move the errors back to CPU and store them as NumPy arrays.
-            errors.append(batch_errors.cpu().numpy())
-    # Combine all batch results into one array.
-    # After this:
-    #   errors[i]
-    # corresponds to healthy_X[i].
-    # This correspondence is important because cluster_ids[i]
-    # must refer to the same sample.
-    errors = np.concatenate(errors)
+    # Per-cluster Mahalanobis, computed against that cluster's own reference.
+    maha_all = np.full(len(mu_val), np.nan, dtype=np.float64)
 
-    thresholds: dict = {}
-
-    # Build a separate threshold for each operating condition.
     for c in range(n_clusters):
-        # Identify healthy samples belonging to this cluster.
-        mask = cluster_ids == c
-        # We need at least two samples to calculate a meaningful standard deviation.
+        mask = val_cluster_ids == c
         if mask.sum() < 2:
             continue
 
-        # Extract reconstruction errors for this cluster only.
-        ec = errors[mask]
+        # --- reconstruction-error drift threshold
+        drift_thresholds[c] = float(np.quantile(recon[mask], drift_quantile))
 
-        # Define the cluster's "normal" reconstruction-error limit.
-        # Errors above this value are considered unusual relative
-        # to the healthy training data for this operating condition.
-        thresholds[c] = float(ec.mean() + 2.0 * ec.std())
+        # --- geometry alarm threshold
+        if c in reference:
+            ref = reference[c]
+            m = mahalanobis(mu_val[mask], ref["mu"], ref["cov_inv"])
+            maha_all[mask] = m
+            geo_thresholds[c] = float(np.quantile(m, geo_quantile))
+            maha_grid[str(c)] = [float(v) for v in np.quantile(m, levels)]
 
-    # Also calculate a global threshold across every healthy sample.
-    # This provides a fallback if a cluster-specific threshold
-    # cannot be used.
-    thresholds["global"] = float(errors.mean() + 2.0 * errors.std())
+    drift_thresholds["global"] = float(np.quantile(recon, drift_quantile))
 
-    print("Drift thresholds (recon error mean+2σ):")
+    finite_maha = maha_all[np.isfinite(maha_all)]
+    if len(finite_maha) > 1:
+        geo_thresholds["global"] = float(np.quantile(finite_maha, geo_quantile))
+        maha_grid["global"] = [float(v) for v in np.quantile(finite_maha, levels)]
 
-    for k, v in thresholds.items():
-        print(f"  cluster {k}: {v:.6f}")
+    print(f"    Calibrated on {len(recon):,} healthy validation windows")
+    print(f"    Drift thresholds (recon error, q={drift_quantile}):")
+    for k, v in drift_thresholds.items():
+        print(f"      cluster {k}: {v:.6f}")
+    print(f"    Geometry thresholds (Mahalanobis, q={geo_quantile}):")
+    for k, v in geo_thresholds.items():
+        print(f"      cluster {k}: {v:.4f}")
 
-    return thresholds
+    return {
+        "drift_thresholds": drift_thresholds,
+        "geo_thresholds": geo_thresholds,
+        "maha_quantile_grid": maha_grid,
+        "quantile_levels": [float(v) for v in levels],
+        "drift_quantile": float(drift_quantile),
+        "geo_quantile": float(geo_quantile),
+        "n_calibration_windows": int(len(recon)),
+        "calibrated_on": "healthy_validation",
+    }
 
 
 # Per-dataset training pipeline
@@ -441,17 +415,48 @@ def train_vae_for_dataset(dataset_key: str, cfg_ds: dict, registry_path: Path) -
     print(f"{dataset_key} - VAE training")
 
     # VAE hyperparameters, tunable per dataset in datasets.yaml (all optional).
-    healthy_threshold = int(cfg_ds.get("vae_healthy_rul_threshold", 80))
-    hidden_dim = int(cfg_ds.get("vae_hidden_dim", 64))
-    latent_dim = int(cfg_ds.get("vae_latent_dim", 16))
-    num_layers = int(cfg_ds.get("vae_num_layers", 1))
-    beta = float(cfg_ds.get("vae_beta", 1.0))
-    max_epochs = int(cfg_ds.get("vae_epochs", 100))
-    patience = int(cfg_ds.get("vae_patience", 10))
-    lr = float(cfg_ds.get("vae_lr", 1e-3))
-    batch_size = int(cfg_ds.get("vae_batch_size", 256))
-    warmup_fraction = float(cfg_ds.get("vae_beta_warmup_fraction", 0.2))
-    n_clusters = int(cfg_ds.get("n_clusters", 1))
+    #
+    # `_cfg` records WHERE each value came from. This exists because the
+    # single most confusing failure mode of this script is a hyperparameter
+    # that is set in config/datasets.yaml and therefore silently overrides
+    # the default written here — the code looks like it says beta=0.5 while
+    # the run uses beta=0.0. Note also that these values come from
+    # config/datasets.yaml, NOT from config/model_registry.yaml: the
+    # registry is an OUTPUT of this script (it records what was trained),
+    # so editing it can never change how training behaves.
+    _sources: dict[str, str] = {}
+
+    def _cfg(key, default, cast):
+        present = key in cfg_ds
+        _sources[key] = "datasets.yaml" if present else "default"
+        return cast(cfg_ds[key] if present else default)
+
+    healthy_threshold = _cfg("vae_healthy_rul_threshold", 80, int)
+    hidden_dim = _cfg("vae_hidden_dim", 64, int)
+    latent_dim = _cfg("vae_latent_dim", 16, int)
+    num_layers = _cfg("vae_num_layers", 1, int)
+    # NOTE the default. With the loss reduction fixed in vae.py, beta is on
+    # the true ELBO scale, where 1.0 is the honest VAE and anything above
+    # that is a beta-VAE trading reconstruction for disentanglement.
+    # 0.5 gives a live posterior with good reconstruction on CMAPSS; the
+    # useful search range is roughly [0.05, 1.0].
+    beta = _cfg("vae_beta", 0.5, float)
+    free_bits = _cfg("vae_free_bits", 0.05, float)
+    max_epochs = _cfg("vae_epochs", 200, int)
+    patience = _cfg("vae_patience", 15, int)
+    lr = _cfg("vae_lr", 1e-3, float)
+    batch_size = _cfg("vae_batch_size", 256, int)
+    warmup_fraction = _cfg("vae_beta_warmup_fraction", 0.2, float)
+    n_clusters = _cfg("n_clusters", 1, int)
+    drift_quantile = _cfg("vae_drift_quantile", 0.99, float)
+    geo_quantile = _cfg("vae_geo_quantile", 0.99, float)
+    # Default raised from 1e-6 after the first real run: every dataset came
+    # back with cond(cov) between 3e6 and 1.8e7. The ridge is applied
+    # RELATIVE to trace(cov)/d, so 1e-4 brings that down to ~2e5.
+    # A badly conditioned covariance matters because Mahalanobis divides by
+    # it: the near-null directions get amplified by ~sqrt(cond), so a
+    # rounding error in a dead latent direction can dominate the distance.
+    cov_ridge = _cfg("vae_cov_ridge", 1e-4, float)
 
     # seq_length/input_dim must match the predictive backbone (registry) so
     # cycle numbers in health_indices.csv align with predictions_all.csv.
@@ -469,8 +474,42 @@ def train_vae_for_dataset(dataset_key: str, cfg_ds: dict, registry_path: Path) -
     print(f"  seq_length     : {seq_length}  (from backbone champion)")
     print(f"  input_dim      : {input_dim}")
     print(f"  hidden_dim     : {hidden_dim}  latent_dim: {latent_dim}")
-    print(f"  beta           : {beta}  (warmup fraction: {warmup_fraction})")
+    print(f"  beta           : {beta}  [{_sources['vae_beta']}]  "
+          f"(warmup fraction: {warmup_fraction} [{_sources['vae_beta_warmup_fraction']}], "
+          f"free_bits: {free_bits} [{_sources['vae_free_bits']}])")
+
+    # Anything overridden by config/datasets.yaml is listed explicitly. If a
+    # value here is not what you expected, that file is where to change it —
+    # editing model_registry.yaml has no effect on training, because the
+    # registry is written by this script rather than read by it.
+    _overridden = sorted(k for k, v in _sources.items() if v == "datasets.yaml")
+    if _overridden:
+        print(f"  from datasets.yaml: {', '.join(_overridden)}")
+    else:
+        print("  from datasets.yaml: (nothing — all values are code defaults)")
     print(f"  Healthy RUL >  : {healthy_threshold}")
+
+    # beta comes from datasets.yaml and silently overrides this module's
+    # default. Worth calling out explicitly, because beta=0 was the correct
+    # workaround for the OLD loss scaling and is the wrong setting now — the
+    # reduction mismatch that forced it has been fixed, so beta=0 no longer
+    # buys anything and costs the entire probabilistic side of the model.
+    if beta == 0.0:
+        print("  WARNING: beta=0 means this is a plain autoencoder, not a VAE.")
+        print("           The KL term is switched off entirely, so nothing constrains")
+        print("           the posterior: sigma collapses to the logvar clamp floor")
+        print("           (~0.0498) and mu is free to drift to an arbitrary scale.")
+        print("           Fisher-Rao and KL will be dominated by that floor rather")
+        print("           than by degradation. Set vae_beta in config/datasets.yaml")
+        print("           to 0.5 (or anywhere in [0.05, 1.0]) now that the loss")
+        print("           reduction is fixed.")
+    if warmup_fraction == 0.0 and beta > 0.0:
+        print("  WARNING: warmup_fraction=0 applies full beta from epoch 1, before the")
+        print("           decoder has learned anything. Set vae_beta_warmup_fraction")
+        print("           to 0.2 in config/datasets.yaml.")
+    print(f"  NOTE: loss is now summed over (seq_length, input_dim). Absolute")
+    print(f"        loss values are ~{seq_length * input_dim}x larger than previous runs —")
+    print(f"        compare KL and active units, not total loss.")
 
     feature_path = _ROOT / "data" / "processed" / dataset_key / "train_features.csv"
     if not feature_path.exists():
@@ -484,14 +523,14 @@ def train_vae_for_dataset(dataset_key: str, cfg_ds: dict, registry_path: Path) -
     healthy_train = train_df[train_df[TARGET_COL] > healthy_threshold].copy()
     healthy_val = val_df[val_df[TARGET_COL] > healthy_threshold].copy()
 
-    print(f"  Train engines  : {train_df['unit_number'].nunique()} total  → {healthy_train['unit_number'].nunique()} with healthy windows")
-    print(f"  Val engines    : {val_df['unit_number'].nunique()} total  → {healthy_val['unit_number'].nunique()} with healthy windows")
+    print(f"  Train engines  : {train_df['unit_number'].nunique()} total  -> {healthy_train['unit_number'].nunique()} with healthy windows")
+    print(f"  Val engines    : {val_df['unit_number'].nunique()} total  -> {healthy_val['unit_number'].nunique()} with healthy windows")
 
     if len(healthy_train) == 0:
         raise RuntimeError(f"No healthy training data for {dataset_key} at threshold RUL>{healthy_threshold}.")
 
     X_train, _, _, _, cluster_train = create_health_sequences(healthy_train, seq_length)
-    X_val, _, _, _, _ = create_health_sequences(healthy_val, seq_length)
+    X_val, _, _, _, cluster_val = create_health_sequences(healthy_val, seq_length)
 
     print(f"  Train sequences: {len(X_train):,}")
     print(f"  Val   sequences: {len(X_val):,}")
@@ -522,7 +561,8 @@ def train_vae_for_dataset(dataset_key: str, cfg_ds: dict, registry_path: Path) -
             x_batch = x_batch.to(DEVICE)
             optimizer.zero_grad()
             x_hat, mu, logvar = vae(x_batch)
-            loss, recon, kl = vae_loss(x_batch, x_hat, mu, logvar, beta=current_beta)
+            loss, recon, kl = vae_loss(x_batch, x_hat, mu, logvar,
+                                       beta=current_beta, free_bits=free_bits)
             loss.backward()
             nn.utils.clip_grad_norm_(vae.parameters(), max_norm=1.0)
             optimizer.step()
@@ -542,7 +582,8 @@ def train_vae_for_dataset(dataset_key: str, cfg_ds: dict, registry_path: Path) -
             for (x_batch,) in val_loader:
                 x_batch = x_batch.to(DEVICE)
                 x_hat, mu, logvar = vae(x_batch)
-                loss, recon, kl = vae_loss(x_batch, x_hat, mu, logvar, beta=current_beta)
+                loss, recon, kl = vae_loss(x_batch, x_hat, mu, logvar,
+                                           beta=current_beta, free_bits=free_bits)
                 n = len(x_batch)
                 val_total += loss.item() * n
                 val_recon += recon.item() * n
@@ -556,14 +597,28 @@ def train_vae_for_dataset(dataset_key: str, cfg_ds: dict, registry_path: Path) -
         scheduler.step(val_total)
 
         print(
-            f"  Epoch {epoch+1:>3}/{max_epochs}  β={current_beta:.3f}  "
-            f"train [total={train_total:.4f} recon={train_recon:.4f} kl={train_kl:.4f}]  "
-            f"val [total={val_total:.4f} recon={val_recon:.4f} kl={val_kl:.4f}]"
+            f"  Epoch {epoch+1:>3}/{max_epochs}  beta={current_beta:.3f}  "
+            f"train [total={train_total:.2f} recon={train_recon:.2f} kl={train_kl:.3f}]  "
+            f"val [total={val_total:.2f} recon={val_recon:.2f} kl={val_kl:.3f}]"
         )
 
-        # KL near zero means the encoder is ignoring the input (posterior collapse).
-        if epoch > 10 and val_kl < 0.01:
-            print("  KL ~= 0: possible posterior collapse. Consider lowering beta or increasing warmup_fraction.")
+        # KL sitting at the free-bits floor means every dimension is
+        # riding its allowance and none is carrying information.
+        floor = free_bits * latent_dim
+        if epoch > 10 and val_kl <= floor * 1.05:
+            print(f"  KL pinned at the free-bits floor ({floor:.3f}) — the posterior "
+                  f"is not using the latent space. Lower beta or raise warmup_fraction.")
+
+        # Early stopping is on the total loss, but note this is a moving
+        # target during warm-up because beta is still changing. Only
+        # start counting once beta has reached its target value,
+        # otherwise a decreasing-then-increasing loss triggers a stop for
+        # the wrong reason.
+        warmup_epochs = max(1, int(max_epochs * warmup_fraction))
+        if epoch < warmup_epochs:
+            best_val_loss = val_total
+            best_weights = {k: v.cpu().clone() for k, v in vae.state_dict().items()}
+            continue
 
         if val_total < best_val_loss:
             best_val_loss = val_total
@@ -576,16 +631,69 @@ def train_vae_for_dataset(dataset_key: str, cfg_ds: dict, registry_path: Path) -
                 break
 
     vae.load_state_dict(best_weights)
-    print(f"\n  Best val loss: {best_val_loss:.6f}")
+    print(f"\n  Best val loss: {best_val_loss:.4f}")
 
-    # Both reference and thresholds use TRAINING data only — val stays untouched.
-    print("\n  Building healthy reference distributions")
-    reference = build_healthy_reference(vae, X_train, cluster_train, n_clusters)
+    # --- Posterior diagnostics: is the latent space actually alive?
+    print("\n  Posterior diagnostics (healthy validation windows)")
+    if len(X_val) > 0:
+        mu_v, _, logvar_v = _encode_batched(vae, X_val)
+        diagnostics = posterior_diagnostics(
+            torch.from_numpy(mu_v), torch.from_numpy(logvar_v)
+        )
+    else:
+        mu_v, _, logvar_v = _encode_batched(vae, X_train)
+        diagnostics = posterior_diagnostics(
+            torch.from_numpy(mu_v), torch.from_numpy(logvar_v)
+        )
+        diagnostics["note"] = "computed on training windows (no healthy validation data)"
+
+    print(f"    Active units      : {diagnostics['active_units']} / {diagnostics['latent_dim']}"
+          f"  ({diagnostics['active_fraction']:.0%})")
+    print(f"    Total KL          : {diagnostics['total_kl']:.3f} nats")
+    print(f"    ||mu|| mean/std   : {diagnostics['mu_norm_mean']:.3f} / {diagnostics['mu_norm_std']:.4f}")
+    print(f"    mean sigma        : {diagnostics['sigma_mean']:.4f}")
+    print(f"    per-dim KL        : "
+          + ", ".join(f"{v:.3f}" for v in diagnostics["per_dim_kl"]))
+
+    if diagnostics["active_units"] == 0:
+        print("    LATENT SPACE IS DEAD — no dimension responds to the input. "
+              "The geometry indices will be meaningless. Lower beta and retrain.")
+    elif diagnostics["active_units"] < 3:
+        print("    Very few active units. Geometry indices will be weak. "
+              "Consider lowering beta.")
+    # A large ||mu|| with a tiny std is the specific failure signature
+    # from the original run: the encoder emits a near-constant vector and
+    # the degradation signal hides in the trailing decimals.
+    if diagnostics["mu_norm_mean"] > 0 and \
+       diagnostics["mu_norm_std"] / max(diagnostics["mu_norm_mean"], 1e-9) < 1e-2:
+        print("    ||mu|| is essentially constant across inputs — the encoder is "
+              "ignoring its input even if per-dim KL looks non-zero.")
+
+    # Both reference and calibration are built without ever touching the test set.
+    # Reference: healthy TRAINING windows. Calibration: healthy VALIDATION windows.
+    print("\n  Building healthy reference distributions (full covariance)")
+    reference = build_healthy_reference(vae, X_train, cluster_train, n_clusters, ridge=cov_ridge)
     for c, ref in reference.items():
-        print(f"    cluster {c}: mu_ref norm={np.linalg.norm(ref['mu']):.4f}  sigma_ref mean={ref['sigma'].mean():.4f}")
+        cond = np.linalg.cond(ref["cov"])
+        print(f"    cluster {c}: n={ref['n']:,}  ||mu_ref||={np.linalg.norm(ref['mu']):.4f}  "
+              f"tr(cov)={np.trace(ref['cov']):.4f}  cond(cov)={cond:.1f}")
+        if cond > 1e6:
+            print(f"      Warning: covariance is poorly conditioned. Raise vae_cov_ridge.")
 
-    print("\n  Building drift thresholds...")
-    thresholds = build_drift_thresholds(vae, X_train, cluster_train, n_clusters)
+    print("\n  Calibrating thresholds on healthy validation windows")
+    calibration = build_calibration(
+        vae, X_val, cluster_val, reference, n_clusters,
+        drift_quantile=drift_quantile, geo_quantile=geo_quantile,
+    )
+
+    # If there was no healthy validation data, fall back to training-set
+    # calibration so the pipeline still produces usable artefacts.
+    if not calibration:
+        calibration = build_calibration(
+            vae, X_train, cluster_train, reference, n_clusters,
+            drift_quantile=drift_quantile, geo_quantile=geo_quantile,
+        )
+        calibration["calibrated_on"] = "healthy_train_fallback"
 
     # Save artefacts
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -600,28 +708,108 @@ def train_vae_for_dataset(dataset_key: str, cfg_ds: dict, registry_path: Path) -
     }
     joblib.dump(vae_cfg_save, artifact_dir / "vae_config.pkl")
 
-    reference_saveable = {c: {"mu": ref["mu"].tolist(), "sigma": ref["sigma"].tolist()} for c, ref in reference.items()}
+    # Reference is saved as numpy arrays (joblib handles these natively).
+    # health_monitor.py accepts both this and the older list-of-floats
+    # {mu, sigma} format, so an un-retrained dataset keeps working.
+    reference_saveable = {
+        c: {
+            "mu": ref["mu"], "sigma": ref["sigma"], "cov": ref["cov"],
+            "cov_inv": ref["cov_inv"], "cov_sqrt": ref["cov_sqrt"],
+            "cov_logdet": ref["cov_logdet"], "n": ref["n"],
+        }
+        for c, ref in reference.items()
+    }
     joblib.dump(reference_saveable, artifact_dir / "vae_healthy_reference.pkl")
-    joblib.dump(thresholds, artifact_dir / "vae_drift_thresholds.pkl")
 
-    print(f"  Saved vae_config.pkl, vae_healthy_reference.pkl, vae_drift_thresholds.pkl -> {artifact_dir}")
+    # vae_drift_thresholds.pkl keeps its filename and its {cluster: float,
+    # "global": float} shape so nothing downstream breaks, and the richer
+    # calibration lands in a new sibling file.
+    joblib.dump(calibration["drift_thresholds"], artifact_dir / "vae_drift_thresholds.pkl")
+    joblib.dump(calibration, artifact_dir / "vae_calibration.pkl")
+    joblib.dump(diagnostics, artifact_dir / "vae_diagnostics.pkl")
+
+    print(f"  Saved vae_config.pkl, vae_healthy_reference.pkl, vae_drift_thresholds.pkl,")
+    print(f"        vae_calibration.pkl, vae_diagnostics.pkl -> {artifact_dir}")
 
     current = load_registry(registry_path)
     current[dataset_key]["vae"] = {
         "trained_at": str(datetime.date.today()),
         "best_val_loss": float(best_val_loss),
         "config": vae_cfg_save,
+        "beta": float(beta),
+        "free_bits": float(free_bits),
         "healthy_rul_threshold": healthy_threshold,
         "n_clusters": n_clusters,
+        "loss_reduction": "sum_over_seq_and_features",   # marks post-fix runs
+        "geometry_version": 2,                            # full-covariance reference
+        "posterior": {
+            "active_units": diagnostics["active_units"],
+            "latent_dim": diagnostics["latent_dim"],
+            "total_kl": diagnostics["total_kl"],
+            "mu_norm_mean": diagnostics["mu_norm_mean"],
+            "mu_norm_std": diagnostics["mu_norm_std"],
+            "sigma_mean": diagnostics["sigma_mean"],
+            "per_dim_kl": diagnostics["per_dim_kl"],
+            "per_dim_mu_var": diagnostics["per_dim_mu_var"],
+        },
+        "calibration": {
+            "calibrated_on": calibration.get("calibrated_on"),
+            "drift_quantile": calibration.get("drift_quantile"),
+            "geo_quantile": calibration.get("geo_quantile"),
+            "n_calibration_windows": calibration.get("n_calibration_windows"),
+        },
         "artifacts": {
             "vae": str(artifact_dir / "vae.pt"),
             "config": str(artifact_dir / "vae_config.pkl"),
             "reference": str(artifact_dir / "vae_healthy_reference.pkl"),
             "thresholds": str(artifact_dir / "vae_drift_thresholds.pkl"),
+            "calibration": str(artifact_dir / "vae_calibration.pkl"),
+            "diagnostics": str(artifact_dir / "vae_diagnostics.pkl"),
         },
     }
     save_registry(registry_path, current)
     print(f"  Registry updated -> vae section added for {dataset_key}")
+
+
+class _StrictLoader(yaml.SafeLoader):
+    """
+    SafeLoader that refuses duplicate keys inside a mapping.
+
+    Plain yaml.safe_load accepts
+
+        vae_beta_warmup_fraction: 0.2
+        ...
+        vae_beta_warmup_fraction: 0.0
+
+    without a word of complaint and silently keeps the LAST one. That is
+    valid per the YAML spec (a mapping is built by successive assignment)
+    but it is a genuinely dangerous default for a config file that gets
+    edited by appending: the value you can see at the top of the block is
+    not the value that runs, and nothing anywhere reports the difference.
+
+    Raising here turns a silent wrong-hyperparameter run into a one-line
+    error that names the key and the file.
+    """
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None,
+                    f"duplicate key {key!r} in mapping — the later value silently "
+                    f"overrides the earlier one. Delete one of them.",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+_StrictLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _StrictLoader.construct_mapping,
+)
 
 
 if __name__ == "__main__":
@@ -633,7 +821,7 @@ if __name__ == "__main__":
     datasets_path = _ROOT / "config" / "datasets.yaml"
 
     with open(datasets_path, "r") as f:
-        all_cfg = yaml.safe_load(f) or {}
+        all_cfg = yaml.load(f, Loader=_StrictLoader) or {}
 
     datasets = ["FD001", "FD002", "FD003", "FD004"] if args.dataset == "all" else [args.dataset]
 

@@ -25,6 +25,7 @@ from plotly.subplots import make_subplots
 
 from utils.styles import (
     ALERT_COLORS, DATASET_COLORS, HEALTH_COLORS, HEALTH_LABELS,
+    HEALTH_DESCRIPTIONS, GEOMETRY_INDICES, HIGHER_IS_HEALTHIER, SCORE_BANDS,
     CHART_HEIGHT, CHART_HEIGHT_TALL, CHART_HEIGHT_COMPACT, CHART_THEME,
 )
 
@@ -267,60 +268,121 @@ def build_failure_probability(engine_df: pd.DataFrame, engine_id: int, threshold
     return _apply_theme(fig, height=CHART_HEIGHT)
 
 
-def build_health_index(health_df: pd.DataFrame, engine_id: int) -> go.Figure:
+# Preferred plotting order for the per-engine health index chart. Only the
+# columns that actually exist in the DataFrame are drawn, so this same
+# function works against both the legacy and current health_indices.csv
+# schemas without any branching at the call site.
+_HEALTH_INDEX_ORDER = [
+    "mahalanobis_self",
+    "mahalanobis",
+    "fisher_rao",
+    "recon_error",
+    "kl_div",
+    "js_div",
+    "wasserstein",
+]
+
+
+def _contiguous_runs(mask: pd.Series, x: pd.Series) -> list[tuple]:
     """
-    Normalised VAE health indices for one engine over its observed cycles.
+    Collapse a boolean mask into a list of (x_start, x_end) spans.
 
-    All four metrics (recon_error, kl_div, js_div, wasserstein) are
-    normalised to [0, 1] per engine so they're visually comparable on
-    the same axis even though their raw scales differ significantly.
+    Drawing one vertical line per flagged window means hundreds of Plotly
+    shapes on a long engine record, which is slow to render and reads as
+    a solid wall of red rather than as distinct alarm episodes. Shading
+    contiguous runs instead gives one shape per episode.
+    """
+    mask = mask.to_numpy(dtype=bool)
+    x = x.to_numpy()
+    if not mask.any():
+        return []
 
-    Raw values appear in the hover tooltip so engineers can see actual numbers.
-    Drift flag events are marked as vertical dashed lines.
+    runs = []
+    start = None
+    for k, flagged in enumerate(mask):
+        if flagged and start is None:
+            start = k
+        elif not flagged and start is not None:
+            runs.append((x[start], x[k - 1]))
+            start = None
+    if start is not None:
+        runs.append((x[start], x[-1]))
+    return runs
+
+
+def build_health_index(health_df: pd.DataFrame, engine_id: int,
+                       columns: list[str] | None = None) -> go.Figure:
+    """
+    Normalised health indices for one engine over its observed cycles.
+
+    Each index is min-max normalised to [0, 1] PER ENGINE so indices on
+    wildly different scales (a Mahalanobis distance of ~40 and a
+    reconstruction error of ~0.14) can share an axis. Raw values stay in
+    the hover tooltip, because the normalised value is only meaningful
+    relative to this engine's own range.
+
+    A consequence worth stating on the page: normalising per engine means
+    every engine's worst window maps to 1.0, including engines that never
+    actually degraded. The chart shows SHAPE, not severity. Absolute
+    severity is what health_score and the fleet scatter are for.
+
+    Confirmed alarm episodes are shaded rather than drawn as one line per
+    window. Where both raw and confirmed flags exist, only confirmed
+    episodes are shaded — the raw ones are shown on the alarm timeline.
 
     health_df: rows from health_indices.csv filtered to one engine.
+    columns:   optional explicit index list; defaults to whatever of
+               _HEALTH_INDEX_ORDER is present.
     """
     df = health_df.sort_values("cycle").copy()
 
+    if columns is None:
+        columns = [c for c in _HEALTH_INDEX_ORDER if c in df.columns]
+
     fig = go.Figure()
 
-    for col in ["recon_error", "kl_div", "js_div", "wasserstein"]:
+    for col in columns:
         if col not in df.columns:
             continue
 
-        # Normalise per engine for visual comparison
         norm_col = _normalise_column(df[col])
 
         fig.add_trace(go.Scatter(
             x=df["cycle"],
             y=norm_col,
             mode="lines",
-            line=dict(color=HEALTH_COLORS[col], width=1.8),
-            name=HEALTH_LABELS[col],
+            line=dict(color=HEALTH_COLORS.get(col, "#6B7280"), width=1.8),
+            name=HEALTH_LABELS.get(col, col),
             hovertemplate=(
                 f"Cycle %{{x}}<br>"
-                f"{HEALTH_LABELS[col]}: %{{customdata:.5f}} (raw)<br>"
+                f"{HEALTH_LABELS.get(col, col)}: %{{customdata:.5f}} (raw)<br>"
                 f"Normalised: %{{y:.3f}}<extra></extra>"
             ),
             customdata=df[col],
         ))
 
-    # Mark drift events as vertical dashed lines
-    if "drift_flag" in df.columns:
-        drift_cycles = df[df["drift_flag"]]["cycle"]
-        for cyc in drift_cycles:
-            fig.add_vline(
-                x=cyc,
-                line=dict(color="#DC2626", width=0.6, dash="dot"),
-                opacity=0.4,
+    # Shade confirmed alarm episodes.
+    shade_specs = [
+        ("drift_flag", "#DC2626", "Reconstruction drift"),
+        ("geo_alarm", "#4F46E5", "Geometry alarm"),
+    ]
+    for flag_col, colour, label in shade_specs:
+        if flag_col not in df.columns:
+            continue
+        runs = _contiguous_runs(df[flag_col].astype(bool), df["cycle"])
+        for x0, x1 in runs:
+            fig.add_vrect(
+                x0=x0, x1=max(x1, x0 + 0.5),
+                fillcolor=colour, opacity=0.10,
+                line_width=0, layer="below",
             )
-        # Add a single legend entry for drift events
-        if len(drift_cycles) > 0:
+        if runs:
+            # One invisible trace carries the legend entry for the shading.
             fig.add_trace(go.Scatter(
-                x=[drift_cycles.iloc[0]], y=[None],
-                mode="lines",
-                line=dict(color="#DC2626", width=1, dash="dot"),
-                name=f"Drift detected ({len(drift_cycles)} windows)",
+                x=[df["cycle"].iloc[0]], y=[None],
+                mode="markers",
+                marker=dict(color=colour, size=10, symbol="square", opacity=0.35),
+                name=f"{label} ({len(runs)} episode{'s' if len(runs) != 1 else ''})",
                 showlegend=True,
             ))
 
@@ -389,7 +451,17 @@ def build_residual_scatter(engine_df: pd.DataFrame, engine_id: int) -> go.Figure
 
 # MODEL PERFORMANCE CHARTS
 
-def build_calibration_subplots(all_cal: dict[str, pd.DataFrame]) -> go.Figure:
+# (column, legend label, line dash, opacity) for the calibration subplots.
+# Order matters — it is the legend order.
+_CAL_SERIES = [
+    ("actual_coverage",            "Raw (sigma scaled)",        "solid", 1.00),
+    ("recal_coverage",             "+ CDF recalibration",       "dot",   0.95),
+    ("uncensored_coverage",        "Raw, uncensored only",      "dash",  0.60),
+    ("uncensored_recal_coverage",  "Recal, uncensored only",    "longdash", 0.60),
+]
+
+def build_calibration_subplots(all_cal: dict[str, pd.DataFrame],
+                               series: list[str] | None = None) -> go.Figure:
     """
     2×2 grid of calibration plots — one per dataset.
 
@@ -412,7 +484,7 @@ def build_calibration_subplots(all_cal: dict[str, pd.DataFrame]) -> go.Figure:
 
     for idx, ds in enumerate(datasets):
         row = idx // 2 + 1
-        col = idx %  2 + 1
+        col_i = idx %  2 + 1
         cal = all_cal.get(ds, pd.DataFrame())
 
         # Perfect calibration diagonal
@@ -423,7 +495,7 @@ def build_calibration_subplots(all_cal: dict[str, pd.DataFrame]) -> go.Figure:
             line=dict(color="#9CA3AF", width=1, dash="dash"),
             showlegend=(idx == 0),
             name="Perfect calibration",
-        ), row=row, col=col)
+        ), row=row, col=col_i)
 
         # ±0.05 tolerance band
         fig.add_trace(go.Scatter(
@@ -435,10 +507,34 @@ def build_calibration_subplots(all_cal: dict[str, pd.DataFrame]) -> go.Figure:
             showlegend=(idx == 0),
             name="±5% tolerance",
             hoverinfo="skip",
-        ), row=row, col=col)
+        ), row=row, col=col_i)
 
-        # Actual coverage dots
-        if not cal.empty:
+        # Coverage curves. Which columns exist depends on how evaluate.py
+        # was run: `actual_coverage` is always present, the other three
+        # appear once a CDF recalibrator and max_rul are configured.
+        for col, label, dash, opacity in _CAL_SERIES:
+            if cal.empty or col not in cal.columns:
+                continue
+            if series is not None and col not in series:
+                continue
+            fig.add_trace(go.Scatter(
+                x=cal["expected_coverage"],
+                y=cal[col],
+                mode="markers+lines",
+                marker=dict(color=DATASET_COLORS.get(ds, "#6366F1"),
+                            size=7, opacity=opacity),
+                line=dict(color=DATASET_COLORS.get(ds, "#6366F1"),
+                          width=1.6, dash=dash),
+                name=label,
+                legendgroup=col,
+                showlegend=(idx == 0),
+                opacity=opacity,
+                hovertemplate=(f"{label}<br>expected %{{x:.2f}}"
+                               "<br>actual %{y:.3f}<extra></extra>"),
+            ), row=row, col=col_i)
+
+        # (legacy single-series block retained below, now unreachable)
+        if False:
             fig.add_trace(go.Scatter(
                 x=cal["expected_coverage"],
                 y=cal["actual_coverage"],
@@ -453,7 +549,7 @@ def build_calibration_subplots(all_cal: dict[str, pd.DataFrame]) -> go.Figure:
                     "Expected: %{x:.0%}<br>"
                     "Actual:   %{y:.3f}<extra>" + ds + "</extra>"
                 ),
-            ), row=row, col=col)
+            ), row=row, col=col_i)
 
     fig.update_xaxes(title_text="Expected coverage", range=[0.45, 1.0])
     fig.update_yaxes(title_text="Actual coverage",   range=[0.4,  1.05])
@@ -709,3 +805,489 @@ def build_drift_engine_bar(health_df: pd.DataFrame) -> go.Figure:
         height=max(CHART_HEIGHT, len(drift_frac) * 8),  # scale with number of engines
     )
     return _apply_theme(fig)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INFORMATION-GEOMETRY CHARTS
+#
+# These were added when the health monitor moved from a diagonal
+# posterior reference to a full-covariance healthy population reference.
+# Every function here degrades gracefully if the column it wants is
+# absent, so the page still renders against a legacy health_indices.csv.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_geometry_fleet(health_df: pd.DataFrame,
+                         index_col: str,
+                         threshold: float | None = None,
+                         alarm_col: str | None = None,
+                         log_y: bool = False) -> go.Figure:
+    """
+    Generic fleet scatter: any health index against true RUL, coloured by
+    whether that window tripped an alarm.
+
+    This generalises build_recon_error_fleet so the page can offer a
+    selector over every available index rather than hard-coding
+    reconstruction error. Being able to flip between Mahalanobis and
+    reconstruction error on the same axes is the fastest way to see that
+    they are not measuring the same thing.
+
+    The x axis is reversed so the chart reads left-to-right as time:
+    healthy (high RUL) on the right, failing on the left.
+
+    log_y helps when an index is heavily right-skewed — KL divergence
+    against a tight healthy population routinely spans three orders of
+    magnitude, which flattens everything into the bottom of a linear axis.
+    """
+    if index_col not in health_df.columns:
+        return go.Figure()
+
+    fig = go.Figure()
+    label = HEALTH_LABELS.get(index_col, index_col)
+
+    has_alarm = alarm_col is not None and alarm_col in health_df.columns
+    normal = health_df[~health_df[alarm_col].astype(bool)] if has_alarm else health_df
+
+    fig.add_trace(go.Scatter(
+        x=normal["true_rul"],
+        y=normal[index_col],
+        mode="markers",
+        marker=dict(color="#9CA3AF", size=2, opacity=0.4),
+        name="Normal",
+        hovertemplate=f"RUL: %{{x:.0f}}<br>{label}: %{{y:.4f}}<extra></extra>",
+    ))
+
+    if has_alarm:
+        alarmed = health_df[health_df[alarm_col].astype(bool)]
+        if len(alarmed) > 0:
+            fig.add_trace(go.Scatter(
+                x=alarmed["true_rul"],
+                y=alarmed[index_col],
+                mode="markers",
+                marker=dict(color=ALERT_COLORS["CRITICAL"], size=3, opacity=0.7),
+                name="Alarm confirmed",
+                hovertemplate=f"RUL: %{{x:.0f}}<br>{label}: %{{y:.4f}}<extra></extra>",
+            ))
+
+    if threshold is not None:
+        fig.add_hline(
+            y=threshold,
+            line=dict(color="#DC2626", width=1.5, dash="dash"),
+            annotation_text=f"Alarm threshold ({threshold:.4g})",
+            annotation_position="right",
+            annotation_font_size=9,
+        )
+
+    fig.update_layout(
+        title=f"{label} vs True RUL",
+        xaxis_title="True RUL (cycles)",
+        xaxis_autorange="reversed",
+        yaxis_title=label,
+        yaxis_type="log" if log_y else "linear",
+        hovermode="closest",
+    )
+    return _apply_theme(fig, height=CHART_HEIGHT)
+
+
+def build_index_small_multiples(health_df: pd.DataFrame,
+                                columns: list[str],
+                                n_cols: int = 3,
+                                sample: int = 6000) -> go.Figure:
+    """
+    A grid of index-vs-RUL scatters, one panel per index, on shared x.
+
+    The point of showing them together rather than one at a time is that
+    the differences are structural, not cosmetic: a good index forms a
+    visible fan opening toward low RUL, a dead one forms a horizontal
+    band. Side by side that is obvious in a second; one at a time it
+    takes an argument.
+
+    `sample` caps the number of points per panel — Plotly gets sluggish
+    past ~10k markers per subplot and FD004 has far more windows than
+    that. Sampling is deterministic (fixed seed) so the chart does not
+    reshuffle on every Streamlit rerun.
+    """
+    columns = [c for c in columns if c in health_df.columns]
+    if not columns:
+        return go.Figure()
+
+    df = health_df
+    if len(df) > sample:
+        df = df.sample(sample, random_state=0)
+
+    n_rows = (len(columns) + n_cols - 1) // n_cols
+    fig = make_subplots(
+        rows=n_rows, cols=n_cols,
+        subplot_titles=[HEALTH_LABELS.get(c, c) for c in columns],
+        horizontal_spacing=0.08, vertical_spacing=0.14,
+    )
+
+    for k, col in enumerate(columns):
+        r, c = divmod(k, n_cols)
+        fig.add_trace(
+            go.Scatter(
+                x=df["true_rul"],
+                y=df[col],
+                mode="markers",
+                marker=dict(
+                    color=HEALTH_COLORS.get(col, "#6B7280"),
+                    size=2, opacity=0.35,
+                ),
+                name=HEALTH_LABELS.get(col, col),
+                showlegend=False,
+                hovertemplate=f"RUL: %{{x:.0f}}<br>value: %{{y:.4f}}<extra></extra>",
+            ),
+            row=r + 1, col=c + 1,
+        )
+        fig.update_xaxes(autorange="reversed", row=r + 1, col=c + 1)
+
+    fig.update_layout(
+        title="Every health index against true RUL — a good index fans out toward low RUL",
+    )
+    fig.update_annotations(font_size=11)
+    return _apply_theme(fig, height=max(CHART_HEIGHT, 230 * n_rows))
+
+
+def build_health_score_trajectory(engine_df: pd.DataFrame,
+                                  engine_id: int) -> go.Figure:
+    """
+    Health score (0-100) over an engine's life, with the score bands
+    shaded behind it and confirmed alarm episodes marked.
+
+    Unlike the normalised index chart, this axis is absolute and
+    comparable across engines and datasets: the score is a percentile
+    against HEALTHY VALIDATION data, not against this engine's own range.
+    An engine that never leaves the green band never degraded, and the
+    chart says so plainly rather than rescaling its noise to fill the
+    frame.
+    """
+    if "health_score" not in engine_df.columns:
+        return go.Figure()
+
+    df = engine_df.sort_values("cycle")
+    fig = go.Figure()
+
+    # Score bands as background stripes.
+    for lo, hi, colour, label in SCORE_BANDS:
+        fig.add_hrect(
+            y0=lo, y1=min(hi, 100),
+            fillcolor=colour, opacity=0.07,
+            line_width=0, layer="below",
+            annotation_text=label,
+            annotation_position="right",
+            annotation_font_size=8,
+        )
+
+    fig.add_trace(go.Scatter(
+        x=df["cycle"],
+        y=df["health_score"],
+        mode="lines",
+        line=dict(color="#0F172A", width=2),
+        name="Health score",
+        customdata=df["true_rul"],
+        hovertemplate=("Cycle %{x}<br>Health score: %{y:.1f}"
+                       "<br>True RUL: %{customdata:.0f}<extra></extra>"),
+    ))
+
+    for flag_col, colour in [("geo_alarm", "#4F46E5"), ("drift_flag", "#DC2626")]:
+        if flag_col not in df.columns:
+            continue
+        for x0, x1 in _contiguous_runs(df[flag_col].astype(bool), df["cycle"]):
+            fig.add_vrect(x0=x0, x1=max(x1, x0 + 0.5), fillcolor=colour,
+                          opacity=0.10, line_width=0, layer="below")
+
+    fig.update_layout(
+        title=f"Engine {engine_id} — Health Score (100 = indistinguishable from healthy)",
+        xaxis_title="Cycle",
+        yaxis_title="Health score",
+        yaxis_range=[-2, 102],
+        hovermode="x unified",
+    )
+    return _apply_theme(fig, height=CHART_HEIGHT)
+
+
+def build_alarm_timeline(engine_df: pd.DataFrame, engine_id: int) -> go.Figure:
+    """
+    Raw vs confirmed alarm state over an engine's life, as four stacked
+    step traces.
+
+    This exists to make the persistence filter visible. A threshold
+    calibrated at the 99th healthy percentile fires on 1% of healthy
+    windows by construction, so raw flags scatter sporadic single-window
+    hits across the whole record; the confirmed row shows what survives
+    the k-of-n requirement. Seeing the two rows together is the clearest
+    way to justify the filter — and to notice if it has been set so
+    aggressively that it is swallowing real detections.
+    """
+    df = engine_df.sort_values("cycle")
+
+    rows = [
+        ("drift_raw", "Recon drift (raw)", "#FCA5A5"),
+        ("drift_flag", "Recon drift (confirmed)", "#DC2626"),
+        ("geo_alarm_raw", "Geometry (raw)", "#A5B4FC"),
+        ("geo_alarm", "Geometry (confirmed)", "#4F46E5"),
+    ]
+    rows = [r for r in rows if r[0] in df.columns]
+    if not rows:
+        return go.Figure()
+
+    fig = go.Figure()
+
+    for level, (col, label, colour) in enumerate(rows):
+        flags = df[col].astype(bool)
+        # Plot only the flagged cycles as markers on this row's baseline.
+        flagged_cycles = df.loc[flags, "cycle"]
+        fig.add_trace(go.Scatter(
+            x=flagged_cycles,
+            y=[level] * len(flagged_cycles),
+            mode="markers",
+            marker=dict(color=colour, size=6, symbol="line-ns-open",
+                        line=dict(width=2, color=colour)),
+            name=label,
+            hovertemplate=f"{label}<br>Cycle %{{x}}<extra></extra>",
+        ))
+
+    fig.update_layout(
+        title=f"Engine {engine_id} — Alarm timeline (raw vs persistence-filtered)",
+        xaxis_title="Cycle",
+        yaxis=dict(
+            tickmode="array",
+            tickvals=list(range(len(rows))),
+            ticktext=[r[1] for r in rows],
+            range=[-0.6, len(rows) - 0.4],
+        ),
+        showlegend=False,
+        hovermode="closest",
+    )
+    return _apply_theme(fig, height=CHART_HEIGHT_COMPACT)
+
+
+def build_index_quality_bar(metrics_df: pd.DataFrame,
+                            metric: str = "composite") -> go.Figure:
+    """
+    Horizontal bar chart of one prognostic-quality metric across indices,
+    from health_index_metrics.csv.
+
+    metric: "composite", "monotonicity", "trendability", "prognosability",
+            "mean_engine_spearman", or "frac_correct_direction".
+
+    mean_engine_spearman is plotted as its absolute value, because the
+    sign is a property of the index's direction (health_score rises with
+    health, every other index rises with damage) and not a property of
+    its quality. The unsigned magnitude is what is comparable.
+    """
+    if metrics_df.empty or metric not in metrics_df.columns:
+        return go.Figure()
+
+    df = metrics_df.copy()
+    values = df[metric].abs() if metric == "mean_engine_spearman" else df[metric]
+    df = df.assign(_v=values).dropna(subset=["_v"]).sort_values("_v")
+
+    fig = go.Figure(go.Bar(
+        x=df["_v"],
+        y=[HEALTH_LABELS.get(i, i) for i in df["index"]],
+        orientation="h",
+        marker_color=[HEALTH_COLORS.get(i, "#6B7280") for i in df["index"]],
+        hovertemplate="%{y}: %{x:.3f}<extra></extra>",
+    ))
+
+    pretty = metric.replace("_", " ").title()
+    fig.update_layout(
+        title=f"Health index quality — {pretty} (higher is better)",
+        xaxis_title=pretty,
+        yaxis_title="",
+    )
+    return _apply_theme(fig, height=max(CHART_HEIGHT_COMPACT, 34 * len(df) + 110))
+
+
+def build_index_quality_radar(metrics_df: pd.DataFrame,
+                              top_n: int = 5) -> go.Figure:
+    """
+    Radar comparison of the three Coble & Hines metrics for the best few
+    indices.
+
+    A radar is the right shape here because the three metrics are
+    genuinely different axes rather than a ranking: an index can be
+    highly monotone but untrendable (moves smoothly, but in different
+    directions on different engines), and the polygon shape shows that
+    trade-off at a glance where three separate bar charts would not.
+
+    Kept to the top few indices — a radar with ten overlapping polygons
+    is unreadable.
+    """
+    if metrics_df.empty:
+        return go.Figure()
+
+    axes = ["monotonicity", "trendability", "prognosability"]
+    axes = [a for a in axes if a in metrics_df.columns]
+    if len(axes) < 3:
+        return go.Figure()
+
+    df = metrics_df.dropna(subset=axes).nlargest(top_n, "composite")
+
+    fig = go.Figure()
+    for _, row in df.iterrows():
+        name = row["index"]
+        values = [float(row[a]) for a in axes]
+        fig.add_trace(go.Scatterpolar(
+            r=values + [values[0]],            # close the polygon
+            theta=[a.title() for a in axes] + [axes[0].title()],
+            fill="toself",
+            opacity=0.35,
+            line=dict(color=HEALTH_COLORS.get(name, "#6B7280"), width=2),
+            name=HEALTH_LABELS.get(name, name),
+        ))
+
+    fig.update_layout(
+        title="Prognostic quality profile — top indices",
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+    )
+    return _apply_theme(fig, height=CHART_HEIGHT)
+
+
+def build_latent_diagnostics_bar(posterior: dict) -> go.Figure:
+    """
+    Per-dimension KL and posterior-mean variance, from the VAE diagnostics
+    stored in model_registry.yaml.
+
+    Two bars per latent dimension because they answer different questions
+    and can disagree:
+
+      per-dim KL      how far q(z_j|x) sits from the N(0,1) prior. Can be
+                      non-zero purely from a constant offset.
+      Var_x(mu_j)     how much the posterior mean MOVES as the input
+                      changes. This is the honest test of whether the
+                      dimension carries information (Burda et al. 2016).
+
+    The failure this chart is built to expose: a dimension with healthy
+    KL but near-zero mean variance is a dead unit wearing a disguise,
+    which is exactly what the pre-fix FD001 run had across the board.
+    """
+    per_dim_kl = posterior.get("per_dim_kl") or []
+    mu_var = posterior.get("per_dim_mu_var") or []
+    if not per_dim_kl:
+        return go.Figure()
+
+    dims = list(range(len(per_dim_kl)))
+    threshold = posterior.get("active_threshold", 1e-2)
+
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
+        subplot_titles=("KL from prior, per latent dimension (nats)",
+                        "Var(mu) per latent dimension — the active-unit test"),
+    )
+
+    fig.add_trace(go.Bar(
+        x=dims, y=per_dim_kl, marker_color="#8B5CF6",
+        name="KL", hovertemplate="dim %{x}: %{y:.4f} nats<extra></extra>",
+        showlegend=False,
+    ), row=1, col=1)
+
+    if mu_var:
+        colours = ["#16A34A" if v > threshold else "#D1D5DB" for v in mu_var]
+        fig.add_trace(go.Bar(
+            x=dims, y=mu_var, marker_color=colours,
+            name="Var(mu)",
+            hovertemplate="dim %{x}: %{y:.5f}<extra></extra>",
+            showlegend=False,
+        ), row=2, col=1)
+        fig.add_hline(
+            y=threshold, row=2, col=1,
+            line=dict(color="#DC2626", width=1, dash="dash"),
+            annotation_text=f"active threshold ({threshold:g})",
+            annotation_position="right", annotation_font_size=8,
+        )
+        fig.update_yaxes(type="log", row=2, col=1)
+
+    fig.update_xaxes(title_text="Latent dimension", row=2, col=1)
+    fig.update_layout(title="VAE posterior diagnostics", bargap=0.25)
+    fig.update_annotations(font_size=11)
+    return _apply_theme(fig, height=CHART_HEIGHT_TALL)
+
+
+def build_engine_alarm_bar(health_df: pd.DataFrame,
+                           flag_col: str = "drift_flag") -> go.Figure:
+    """
+    Per-engine fraction of windows under a given confirmed alarm.
+
+    Generalises build_drift_engine_bar to any flag column so the page can
+    show reconstruction drift and the geometry alarm on the same footing.
+    """
+    if flag_col not in health_df.columns:
+        return go.Figure()
+
+    frac = (health_df.groupby("unit_number")[flag_col]
+            .mean().sort_values(ascending=True))
+
+    bar_colors = frac.apply(
+        lambda f: ALERT_COLORS["CRITICAL"] if f > 0.50
+                  else (ALERT_COLORS["WARNING"] if f > 0.20
+                  else ALERT_COLORS["MONITOR"])
+    )
+
+    pretty = "Geometry alarm" if flag_col.startswith("geo") else "Reconstruction drift"
+
+    fig = go.Figure(go.Bar(
+        x=frac.values,
+        y=frac.index.astype(str),
+        orientation="h",
+        marker_color=bar_colors.values,
+        hovertemplate="Engine %{y}: %{x:.1%} of windows<extra></extra>",
+    ))
+
+    fig.update_layout(
+        title=f"{pretty} — fraction of windows flagged, per engine",
+        xaxis_title="Fraction of windows flagged",
+        xaxis_tickformat=".0%",
+        yaxis_title="Engine",
+        height=max(CHART_HEIGHT, len(frac) * 8),
+    )
+    return _apply_theme(fig)
+
+
+def build_lead_time_hist(health_df: pd.DataFrame,
+                         flag_col: str = "geo_alarm") -> go.Figure:
+    """
+    Distribution of true RUL at the first CONFIRMED alarm, across engines.
+
+    This is the operationally meaningful summary: how much life was left
+    when the monitor first spoke up. A histogram piled against the
+    right-hand edge (high RUL) means the monitor is firing immediately
+    and the threshold is too tight; one piled at zero means it only fires
+    once the engine has already failed.
+
+    Engines that never alarm are excluded and reported in the title,
+    since they have no first-alarm RUL to plot — and quietly dropping
+    them would make a monitor that alarms on three engines look excellent.
+    """
+    if flag_col not in health_df.columns:
+        return go.Figure()
+
+    alarmed = health_df[health_df[flag_col].astype(bool)]
+    n_total = health_df["unit_number"].nunique()
+
+    if alarmed.empty:
+        fig = go.Figure()
+        fig.update_layout(title=f"No engines alarmed on {flag_col}")
+        return _apply_theme(fig, height=CHART_HEIGHT_COMPACT)
+
+    first = alarmed.sort_values("cycle").groupby("unit_number").first()
+    n_alarmed = len(first)
+
+    pretty = "Geometry alarm" if flag_col.startswith("geo") else "Reconstruction drift"
+
+    fig = go.Figure(go.Histogram(
+        x=first["true_rul"],
+        nbinsx=25,
+        marker_color=HEALTH_COLORS.get("mahalanobis" if flag_col.startswith("geo")
+                                       else "recon_error", "#6B7280"),
+        hovertemplate="RUL %{x}: %{y} engines<extra></extra>",
+    ))
+
+    fig.update_layout(
+        title=(f"{pretty} — true RUL at first confirmed alarm "
+               f"({n_alarmed}/{n_total} engines alarmed)"),
+        xaxis_title="True RUL when the alarm first fired (cycles)",
+        yaxis_title="Engines",
+        bargap=0.05,
+    )
+    return _apply_theme(fig, height=CHART_HEIGHT_COMPACT)

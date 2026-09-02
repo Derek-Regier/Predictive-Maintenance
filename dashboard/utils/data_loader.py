@@ -128,8 +128,22 @@ def load_health_indices(dataset: str) -> pd.DataFrame:
     Per-window VAE health metrics for all test engines.
     Returns an empty DataFrame if health_monitor.py has not been run yet.
 
-    Columns: unit_number, cycle, true_rul, kl_div, js_div, wasserstein,
-             recon_error, drift_flag, op_cluster, latent_mu_norm
+    Current schema (geometry_version 2):
+        unit_number, cycle, true_rul, op_cluster,
+        mahalanobis, fisher_rao, kl_div, js_div, wasserstein,
+        mahalanobis_self, fisher_rao_self,
+        recon_error,
+        drift_raw, drift_flag, geo_alarm_raw, geo_alarm,
+        latent_mu_norm, latent_mu_centered, health_score
+
+    Legacy schema (geometry_version 1) had only:
+        unit_number, cycle, true_rul, kl_div, js_div, wasserstein,
+        recon_error, drift_flag, op_cluster, latent_mu_norm
+
+    The Health Monitor page detects which columns are present rather than
+    assuming, so a dataset that has not been re-run through the updated
+    health_monitor.py still renders (with fewer panels) instead of
+    raising a KeyError.
     """
     path = REPORTS / dataset / "health_indices.csv"
     if not path.exists():
@@ -140,14 +154,39 @@ def load_health_indices(dataset: str) -> pd.DataFrame:
 @st.cache_data(ttl=600)
 def load_health_summary(dataset: str) -> dict:
     """
-    Fleet-level VAE statistics: healthy baseline mean/std per metric,
-    drift thresholds per cluster, n_engines, n_drifted_engines.
+    Fleet-level VAE statistics.
+
+    Always present: n_engines, n_sequences, n_drifted_engines,
+    pct_windows_drifted, drift_thresholds, stats.
+
+    Added in geometry_version 2: geo_thresholds, alarm_config, lead_time,
+    index_quality, latent, posterior.
     """
     path = REPORTS / dataset / "health_summary.json"
     if not path.exists():
         return {}
     with open(path) as f:
         return json.load(f)
+
+
+@st.cache_data(ttl=600)
+def load_health_index_metrics(dataset: str) -> pd.DataFrame:
+    """
+    Prognostic-suitability scores for each health index, written by
+    src/health/evaluate_health_indices.py.
+
+    Columns: index, monotonicity, trendability, prognosability,
+             mean_engine_spearman, frac_correct_direction, fleet_spearman,
+             composite, n_engines
+
+    Returns an empty DataFrame if the evaluation script has not been run.
+    This is what lets the Index Quality tab answer "which index should we
+    trust" with a table rather than an assertion.
+    """
+    path = REPORTS / dataset / "health_index_metrics.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path)
 
 
 # CONFIGURATION
@@ -185,3 +224,12 @@ def load_all_calibration() -> dict[str, pd.DataFrame]:
 def load_all_bucket_metrics() -> dict[str, pd.DataFrame]:
     """Load bucket_metrics.csv for all datasets."""
     return {ds: load_bucket_metrics(ds) for ds in DATASETS}
+
+def load_all_health_summaries() -> dict[str, dict]:
+    """Load health_summary.json for all datasets — used for the cross-dataset
+    health comparison on the Health Monitor page."""
+    return {ds: load_health_summary(ds) for ds in DATASETS}
+
+def load_all_health_index_metrics() -> dict[str, pd.DataFrame]:
+    """Load health_index_metrics.csv for all datasets."""
+    return {ds: load_health_index_metrics(ds) for ds in DATASETS}

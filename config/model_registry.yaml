@@ -28,6 +28,7 @@ FD001:
     artifacts:
       backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\backbone.pt
       meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\stacked_ngboost.pkl
+      cdf_calibrator: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\cdf_calibrator.pkl
     trained_at: '2026-07-27'
     optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD001_ngboost_v2.db
     meta_model_config:
@@ -44,9 +45,17 @@ FD001:
     calibration_alpha: 0.9
     calibration_pre_coverage: 0.8285245901639344
     calibrated_at: '2026-08-05'
+    cdf_calibration:
+      method: isotonic_pit_recalibration
+      reference: Kuleshov et al. 2018
+      fitted_on: validation
+      n_calibration_windows: 2370
+      sigma_scale_at_fit: 1.3045879955244222
+      excluded_censored: true
+      max_rul: 125
   vae:
-    trained_at: '2026-08-08'
-    best_val_loss: 0.1364863405486087
+    trained_at: '2026-09-02'
+    best_val_loss: 20.02013285176737
     config:
       input_dim: 89
       hidden_dim: 64
@@ -54,13 +63,65 @@ FD001:
       seq_length: 50
       num_layers: 1
       dropout: 0.0
+    beta: 0.15
+    free_bits: 0.5
     healthy_rul_threshold: 80
     n_clusters: 1
+    loss_reduction: sum_over_seq_and_features
+    geometry_version: 2
+    posterior:
+      active_units: 16
+      latent_dim: 16
+      total_kl: 12.66167163848877
+      mu_norm_mean: 3.237438440322876
+      mu_norm_std: 0.5198634266853333
+      sigma_mean: 0.5043155550956726
+      per_dim_kl:
+      - 0.4898642301559448
+      - 0.7367221713066101
+      - 0.49263185262680054
+      - 0.45140790939331055
+      - 2.3098959922790527
+      - 0.4708157181739807
+      - 0.42638278007507324
+      - 0.535814642906189
+      - 2.019313097000122
+      - 0.4520634114742279
+      - 0.4741513133049011
+      - 0.5451470613479614
+      - 0.49617308378219604
+      - 0.4973994791507721
+      - 1.7642114162445068
+      - 0.4996781051158905
+      per_dim_mu_var:
+      - 0.3588024377822876
+      - 0.45311522483825684
+      - 0.05809047445654869
+      - 0.28881943225860596
+      - 1.3440544605255127
+      - 0.01284786220639944
+      - 0.09145905077457428
+      - 0.5683305859565735
+      - 0.7944098114967346
+      - 0.024839749559760094
+      - 0.054395440965890884
+      - 0.3084856867790222
+      - 0.020830703899264336
+      - 0.016606777906417847
+      - 1.1709650754928589
+      - 0.11492762714624405
+    calibration:
+      calibrated_on: healthy_validation
+      drift_quantile: 0.99
+      geo_quantile: 0.99
+      n_calibration_windows: 1430
     artifacts:
       vae: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae.pt
       config: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae_config.pkl
       reference: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae_healthy_reference.pkl
       thresholds: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae_drift_thresholds.pkl
+      calibration: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae_calibration.pkl
+      diagnostics: C:\Users\sirde\Projects\Predictive Maintenance\models\FD001\vae_diagnostics.pkl
 FD002:
   champion:
     backbone: tcn
@@ -94,6 +155,7 @@ FD002:
     artifacts:
       backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\backbone.pt
       meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\stacked_ngboost.pkl
+      cdf_calibrator: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\cdf_calibrator.pkl
     trained_at: '2026-07-27'
     optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD002_ngboost_v2.db
     meta_model_config:
@@ -110,9 +172,17 @@ FD002:
     calibration_alpha: 0.9
     calibration_pre_coverage: 0.863163052799216
     calibrated_at: '2026-08-05'
+    cdf_calibration:
+      method: isotonic_pit_recalibration
+      reference: Kuleshov et al. 2018
+      fitted_on: validation
+      n_calibration_windows: 6301
+      sigma_scale_at_fit: 1.124465511547458
+      excluded_censored: true
+      max_rul: 125
   vae:
-    trained_at: '2026-08-08'
-    best_val_loss: 3.5188784733871
+    trained_at: '2026-09-01'
+    best_val_loss: 15141.77007279605
     config:
       input_dim: 125
       hidden_dim: 64
@@ -120,13 +190,97 @@ FD002:
       seq_length: 40
       num_layers: 1
       dropout: 0.0
+    beta: 0.5
+    free_bits: 0.05
     healthy_rul_threshold: 80
     n_clusters: 6
+    loss_reduction: sum_over_seq_and_features
+    geometry_version: 2
+    posterior:
+      active_units: 32
+      latent_dim: 32
+      total_kl: 68.95077514648438
+      mu_norm_mean: 3.9911820888519287
+      mu_norm_std: 1.614279866218567
+      sigma_mean: 0.16186191141605377
+      per_dim_kl:
+      - 2.76699161529541
+      - 2.9057602882385254
+      - 0.13650377094745636
+      - 3.2021687030792236
+      - 2.653839588165283
+      - 3.50296688079834
+      - 0.8539292216300964
+      - 2.04580020904541
+      - 1.2205842733383179
+      - 0.8582027554512024
+      - 3.1599647998809814
+      - 2.6944379806518555
+      - 0.6260828375816345
+      - 2.9897825717926025
+      - 0.21546269953250885
+      - 2.894867181777954
+      - 1.1544324159622192
+      - 2.5429458618164062
+      - 2.9256529808044434
+      - 0.31681621074676514
+      - 3.109989643096924
+      - 2.829826831817627
+      - 2.8980422019958496
+      - 3.0690982341766357
+      - 2.5583724975585938
+      - 2.766317844390869
+      - 1.3579628467559814
+      - 2.054473638534546
+      - 2.607112169265747
+      - 0.2467016875743866
+      - 2.6211817264556885
+      - 3.1645030975341797
+      per_dim_mu_var:
+      - 0.4553682804107666
+      - 0.8011442422866821
+      - 0.03580968827009201
+      - 0.67448490858078
+      - 0.2764092683792114
+      - 1.0648560523986816
+      - 0.11639349162578583
+      - 0.27267012000083923
+      - 0.17402364313602448
+      - 0.08106467127799988
+      - 1.2391676902770996
+      - 0.3867497146129608
+      - 0.07608067244291306
+      - 0.24710646271705627
+      - 0.024513116106390953
+      - 0.7787435054779053
+      - 0.1975870132446289
+      - 0.15697331726551056
+      - 0.33313652873039246
+      - 0.025903111323714256
+      - 1.1772618293762207
+      - 0.45968180894851685
+      - 0.7217651605606079
+      - 1.1116355657577515
+      - 0.11183955520391464
+      - 0.44567716121673584
+      - 0.14014741778373718
+      - 0.2566158175468445
+      - 0.17808137834072113
+      - 0.02681298367679119
+      - 0.23536784946918488
+      - 1.3249359130859375
+    calibration:
+      calibrated_on: healthy_validation
+      drift_quantile: 0.99
+      geo_quantile: 0.99
+      n_calibration_windows: 3951
     artifacts:
       vae: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae.pt
       config: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae_config.pkl
       reference: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae_healthy_reference.pkl
       thresholds: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae_drift_thresholds.pkl
+      calibration: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae_calibration.pkl
+      diagnostics: C:\Users\sirde\Projects\Predictive Maintenance\models\FD002\vae_diagnostics.pkl
 FD003:
   champion:
     backbone: gru
@@ -157,6 +311,7 @@ FD003:
     artifacts:
       backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\backbone.pt
       meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\stacked_ngboost.pkl
+      cdf_calibrator: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\cdf_calibrator.pkl
     trained_at: '2026-08-03'
     optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD003_ngboost_v2.db
     meta_model_config:
@@ -173,9 +328,17 @@ FD003:
     calibration_alpha: 0.9
     calibration_pre_coverage: 0.8915401301518439
     calibrated_at: '2026-08-05'
+    cdf_calibration:
+      method: isotonic_pit_recalibration
+      reference: Kuleshov et al. 2018
+      fitted_on: validation
+      n_calibration_windows: 2480
+      sigma_scale_at_fit: 1.0536670291928583
+      excluded_censored: true
+      max_rul: 125
   vae:
-    trained_at: '2026-08-08'
-    best_val_loss: 0.12896475475461616
+    trained_at: '2026-09-01'
+    best_val_loss: 13.08665861613054
     config:
       input_dim: 95
       hidden_dim: 64
@@ -183,13 +346,65 @@ FD003:
       seq_length: 50
       num_layers: 1
       dropout: 0.0
+    beta: 0.15
+    free_bits: 0.05
     healthy_rul_threshold: 80
     n_clusters: 1
+    loss_reduction: sum_over_seq_and_features
+    geometry_version: 2
+    posterior:
+      active_units: 15
+      latent_dim: 16
+      total_kl: 10.383197784423828
+      mu_norm_mean: 2.1768600940704346
+      mu_norm_std: 0.6283448934555054
+      sigma_mean: 0.6779441833496094
+      per_dim_kl:
+      - 0.04036358743906021
+      - 0.7353025078773499
+      - 0.041703302413225174
+      - 0.043142352253198624
+      - 0.04076371341943741
+      - 0.046773336827754974
+      - 0.03975118324160576
+      - 2.219893217086792
+      - 2.5544803142547607
+      - 2.2671058177948
+      - 0.04629639536142349
+      - 0.0461590401828289
+      - 0.04499800130724907
+      - 2.1277050971984863
+      - 0.046750862151384354
+      - 0.04200918599963188
+      per_dim_mu_var:
+      - 0.06972381472587585
+      - 0.42424362897872925
+      - 0.0509767048060894
+      - 0.039268843829631805
+      - 0.0490250289440155
+      - 0.01432056725025177
+      - 0.0647784098982811
+      - 0.9760767817497253
+      - 0.9896516799926758
+      - 1.252610445022583
+      - 0.008938238956034184
+      - 0.03107951022684574
+      - 0.016311682760715485
+      - 0.5056234002113342
+      - 0.012469986453652382
+      - 0.05994315817952156
+    calibration:
+      calibrated_on: healthy_validation
+      drift_quantile: 0.99
+      geo_quantile: 0.99
+      n_calibration_windows: 2068
     artifacts:
       vae: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae.pt
       config: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae_config.pkl
       reference: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae_healthy_reference.pkl
       thresholds: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae_drift_thresholds.pkl
+      calibration: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae_calibration.pkl
+      diagnostics: C:\Users\sirde\Projects\Predictive Maintenance\models\FD003\vae_diagnostics.pkl
 FD004:
   champion:
     backbone: transformer
@@ -221,6 +436,7 @@ FD004:
     artifacts:
       backbone: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\backbone.pt
       meta_ngboost: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\stacked_ngboost.pkl
+      cdf_calibrator: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\cdf_calibrator.pkl
     trained_at: '2026-08-03'
     optuna_study: C:\Users\sirde\Projects\Predictive Maintenance\studies\FD004_ngboost_v2.db
     meta_model_config:
@@ -237,9 +453,17 @@ FD004:
     calibration_alpha: 0.9
     calibration_pre_coverage: 0.8825093035619351
     calibrated_at: '2026-08-05'
+    cdf_calibration:
+      method: isotonic_pit_recalibration
+      reference: Kuleshov et al. 2018
+      fitted_on: validation
+      n_calibration_windows: 6010
+      sigma_scale_at_fit: 1.0923271405484827
+      excluded_censored: true
+      max_rul: 125
   vae:
-    trained_at: '2026-08-08'
-    best_val_loss: 3.4632007482783664
+    trained_at: '2026-09-01'
+    best_val_loss: 18989.239039745145
     config:
       input_dim: 125
       hidden_dim: 64
@@ -247,10 +471,94 @@ FD004:
       seq_length: 50
       num_layers: 1
       dropout: 0.0
+    beta: 0.5
+    free_bits: 0.05
     healthy_rul_threshold: 80
     n_clusters: 6
+    loss_reduction: sum_over_seq_and_features
+    geometry_version: 2
+    posterior:
+      active_units: 32
+      latent_dim: 32
+      total_kl: 85.2587661743164
+      mu_norm_mean: 3.940603733062744
+      mu_norm_std: 0.4101168215274811
+      sigma_mean: 0.057699840515851974
+      per_dim_kl:
+      - 3.236077308654785
+      - 2.6234254837036133
+      - 2.571227788925171
+      - 3.39119029045105
+      - 2.578824996948242
+      - 1.6191288232803345
+      - 2.679757833480835
+      - 2.6003785133361816
+      - 2.612264633178711
+      - 2.6952829360961914
+      - 1.1178650856018066
+      - 2.917428731918335
+      - 2.635481119155884
+      - 2.9941461086273193
+      - 2.807173490524292
+      - 2.786545991897583
+      - 2.6802752017974854
+      - 2.8676087856292725
+      - 2.608445882797241
+      - 2.7779006958007812
+      - 2.597999334335327
+      - 2.5865671634674072
+      - 2.633739471435547
+      - 2.6254727840423584
+      - 2.8910276889801025
+      - 2.669235944747925
+      - 2.6871821880340576
+      - 3.084080934524536
+      - 2.611578941345215
+      - 2.555187702178955
+      - 2.619805335998535
+      - 2.896450996398926
+      per_dim_mu_var:
+      - 0.13182690739631653
+      - 0.2418806403875351
+      - 0.06356216222047806
+      - 0.04089609533548355
+      - 0.15100878477096558
+      - 0.031812045723199844
+      - 0.15503038465976715
+      - 0.03430875763297081
+      - 0.1072358638048172
+      - 0.2169232815504074
+      - 0.05673041567206383
+      - 0.2663869857788086
+      - 0.266009658575058
+      - 0.08378978818655014
+      - 0.08350612223148346
+      - 0.061353493481874466
+      - 0.0643204003572464
+      - 0.2530374526977539
+      - 0.10913950204849243
+      - 0.16605331003665924
+      - 0.19314108788967133
+      - 0.14606402814388275
+      - 0.20112983882427216
+      - 0.06592154502868652
+      - 0.24820327758789062
+      - 0.15991050004959106
+      - 0.22895196080207825
+      - 0.3281792104244232
+      - 0.10459153354167938
+      - 0.08687278628349304
+      - 0.22117309272289276
+      - 0.134508416056633
+    calibration:
+      calibrated_on: healthy_validation
+      drift_quantile: 0.99
+      geo_quantile: 0.99
+      n_calibration_windows: 5356
     artifacts:
       vae: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae.pt
       config: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae_config.pkl
       reference: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae_healthy_reference.pkl
       thresholds: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae_drift_thresholds.pkl
+      calibration: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae_calibration.pkl
+      diagnostics: C:\Users\sirde\Projects\Predictive Maintenance\models\FD004\vae_diagnostics.pkl

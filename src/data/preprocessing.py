@@ -7,8 +7,10 @@ import os
 import yaml
 import argparse
 
+# All datasets
 DATASETS = ["FD001", "FD002", "FD003", "FD004"]
 
+# Columns per dataset, note unit number is non-sequential 
 COLUMNS = [
     "unit_number", "time_in_cycles", "op_setting_1", "op_setting_2", "op_setting_3",
     "sensor_1", "sensor_2", "sensor_3", "sensor_4", "sensor_5", "sensor_6",
@@ -17,6 +19,7 @@ COLUMNS = [
     "sensor_19", "sensor_20", "sensor_21"
 ]
 
+# Select total feature columns
 SENSOR_COLS = [f"sensor_{i}" for i in range(1, 22)]
 OP_COLS = ["op_setting_1", "op_setting_2", "op_setting_3"]
 FEATURE_COLS = SENSOR_COLS + OP_COLS
@@ -24,18 +27,23 @@ FEATURE_COLS = SENSOR_COLS + OP_COLS
 
 def load_config(config_path: str, dataset_name: str) -> dict:
     """Loads the YAML config and extracts the specific dataset sub-configuration."""
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config file not found: {config_path}")
 
+    # check if config exists
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}") 
+
+    # open and read
     with open(config_path, "r") as f:
         full_config = yaml.safe_load(f)
 
+    # ensure dataset exists
     if dataset_name not in full_config:
         raise KeyError(
             f"Dataset '{dataset_name}' not found in {config_path}. "
             f"Choose from: {list(full_config.keys())}"
         )
 
+    # set and save config
     cfg = full_config[dataset_name]
     cfg["columns"] = COLUMNS
     cfg["sensor_cols"]  = SENSOR_COLS   # updated after drop_low_variance
@@ -46,12 +54,14 @@ def load_config(config_path: str, dataset_name: str) -> dict:
 
 
 def load_data(filename: str) -> pd.DataFrame:
+    """ Basic load data function"""
     df = pd.read_csv(filename, sep=r"\s+", header=None)
     df = df.dropna(axis=1, how="all")
     df.columns = COLUMNS
     return df
 
 def load_rul(filename: str) -> pd.DataFrame:
+    """ Load the RUL Data """
     rul_df = pd.read_csv(filename, sep=r"\s+", header=None)
     rul_df.columns = ["RUL"]
     rul_df["unit_number"] = rul_df.index + 1

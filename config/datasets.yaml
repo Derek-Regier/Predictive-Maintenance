@@ -1,7 +1,7 @@
 FD001:
   n_clusters: 1
   max_rul: 125
-  window_size: 30     
+  window_size: 30
   n_train_engines: 100
   n_test_engines: 100
   fault_modes: [fan]
@@ -13,18 +13,38 @@ FD001:
   vae_hidden_dim: 64
   vae_latent_dim: 16
   vae_num_layers: 1
-  vae_beta: 0.0
-  vae_epochs: 100
-  vae_patience: 10
+  # Lowered from 0.5. At 0.5 this landed alive on one run and dead on the
+  # next with only the warm-up length changed, which is a sign of sitting
+  # right on the edge. FD003 is a near-identical architecture and is stable
+  # at 0.15, so match it and stop straddling the boundary.
+  vae_beta: 0.15
+  vae_beta_warmup_fraction: 0.2
+  # Raised from the 0.05 default. In the last run 14 of 16 latent dimensions
+  # sat at exactly 0.05 — parked on the free-bits floor, feeling no KL
+  # gradient, and still not waking up. 0.05 nats/dim is too small a budget
+  # to matter. 0.5 gives 8 nats of KL-free headroom across the latent, so
+  # reconstruction alone drives the encoder through the early epochs, which
+  # is what free bits is for (Kingma et al. 2016 used 0.125-0.5 per group).
+  #
+  # If this still collapses: FD001 is the most homogeneous dataset (one
+  # operating condition, one fault mode, healthy windows only), so there may
+  # genuinely be little for a latent code to carry and collapse is the
+  # ELBO's correct answer. FD003 is the controlled comparison - same
+  # architecture, same beta, two fault modes, alive. Write it up and move on
+  # rather than spending more runs.
+  vae_free_bits: 0.5
+  vae_epochs: 300
+  vae_patience: 20
+  vae_cov_ridge: 1.0e-4
   vae_lr: 0.001
   vae_batch_size: 256
   vae_healthy_rul_threshold: 80
-  vae_beta_warmup_fraction: 0.0
+  vae_seed: 42
 
 FD002:
   n_clusters: 6
   max_rul: 125
-  window_size: 50     
+  window_size: 50
   n_train_engines: 260
   n_test_engines: 259
   fault_modes: [fan]
@@ -36,18 +56,24 @@ FD002:
   vae_hidden_dim: 64
   vae_latent_dim: 32        # larger latent space for 6-condition complexity
   vae_num_layers: 1
-  vae_beta: 0.0
-  vae_epochs: 100
-  vae_patience: 10
+  # mu is healthy here (32/32 active) but sigma sits on the logvar clamp
+  # floor, because reconstruction outweighs the KL term roughly 300:1.
+  # Raising beta is the wrong lever — the imbalance comes from the input
+  # features being on a much larger scale than FD001/FD003's.
+  vae_beta: 0.5
+  vae_beta_warmup_fraction: 0.2
+  vae_epochs: 300
+  vae_patience: 20
+  vae_cov_ridge: 1.0e-4
   vae_lr: 0.001
   vae_batch_size: 256
   vae_healthy_rul_threshold: 80
-  vae_beta_warmup_fraction: 0.0
+  vae_seed: 42
 
 FD003:
   n_clusters: 1
   max_rul: 125
-  window_size: 30     
+  window_size: 30
   n_train_engines: 100
   n_test_engines: 100
   fault_modes: [HPC]
@@ -59,18 +85,26 @@ FD003:
   vae_hidden_dim: 64
   vae_latent_dim: 16
   vae_num_layers: 1
-  vae_beta: 0.0
-  vae_epochs: 100
-  vae_patience: 10
+  # Lowered from 0.5. At 0.5 with no effective warm-up this collapsed
+  # between epochs 38 and 60: KL fell from 22.6 to 3.7 and never came
+  # back, ending at 0/16 active units. FD001 is a near-identical setup
+  # and survived, so this is a marginal case rather than a broken one —
+  # the warm-up above plus a gentler target should carry it. If it still
+  # collapses, try 0.05 before changing anything structural.
+  vae_beta: 0.15
+  vae_beta_warmup_fraction: 0.2
+  vae_epochs: 300
+  vae_patience: 20
+  vae_cov_ridge: 1.0e-4
   vae_lr: 0.001
   vae_batch_size: 256
   vae_healthy_rul_threshold: 80
-  vae_beta_warmup_fraction: 0.0
+  vae_seed: 42
 
 FD004:
   n_clusters: 6
   max_rul: 125
-  window_size: 50     
+  window_size: 50
   n_train_engines: 248
   n_test_engines: 249
   fault_modes: [HPC, fan]
@@ -80,12 +114,16 @@ FD004:
     warning_prob_50: 0.65
     monitor_prob_50: 0.40
   vae_hidden_dim: 64
-  vae_latent_dim: 32 
+  vae_latent_dim: 32
   vae_num_layers: 1
-  vae_beta: 0.0
-  vae_epochs: 100
-  vae_patience: 10
+  # Same situation as FD002: mu alive, sigma pinned at the clamp floor,
+  # reconstruction outweighing KL by roughly 400:1.
+  vae_beta: 0.5
+  vae_beta_warmup_fraction: 0.2
+  vae_epochs: 300
+  vae_patience: 20
+  vae_cov_ridge: 1.0e-4
   vae_lr: 0.001
   vae_batch_size: 256
   vae_healthy_rul_threshold: 80
-  vae_beta_warmup_fraction: 0.0
+  vae_seed: 42

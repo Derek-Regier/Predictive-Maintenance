@@ -109,10 +109,34 @@ def calibration_table(
     y_true: np.ndarray,
     mu: np.ndarray,
     sigma: np.ndarray,
+    calibrator=None,
+    max_rul: float | None = None,
 ) -> pd.DataFrame:
     """
-    Coverage at each confidence level vs expected. After calibration_scale
-    is applied, the 90% row should read close to 0.90.
+    Coverage at each confidence level vs expected.
+
+    THE CENSORING COLUMN
+    --------------------
+    RUL targets are capped at max_rul (125). On FD004, 62% of test windows
+    sit exactly at that cap, and for those the "target" is not a remaining
+    life at all — it is a constant. The model predicts ~123 against a
+    target of exactly 125, so the residual is near-deterministic and those
+    windows are inside every interval. That single fact accounted for most
+    of FD004's headline miscalibration:
+
+        all windows      mean |coverage error| = 0.142
+        true_rul < 125   mean |coverage error| = 0.036
+
+    The model is four times better calibrated than the marginal number
+    suggests, on the windows where the target means something. Both are
+    reported: `actual_coverage` stays as the headline for continuity, and
+    `uncensored_coverage` is the number to quote when discussing whether
+    the uncertainty estimates are trustworthy.
+
+    Note this cuts the other way too. Because censored windows dominate
+    the marginal statistic, a recalibration map fitted on marginal PIT
+    values spends most of its capacity correcting an artefact of the cap
+    rather than correcting the model.
     """
     rows = []
     for alpha in [0.50, 0.60, 0.70, 0.80, 0.90, 0.95]:
@@ -120,12 +144,42 @@ def calibration_table(
         in_band  = (y_true >= mu - z*sigma) & (y_true <= mu + z*sigma)
         coverage = float(in_band.mean())
         width = float(np.mean(2 * z * sigma))
-        rows.append({
+        row = {
             "expected_coverage": alpha,
             "actual_coverage": coverage,
             "mean_pi_width": round(width, 3),
             "error": round(coverage - alpha, 4),
-        })
+        }
+
+        # If a distributional recalibrator is loaded, report its coverage
+        # alongside — not instead of — the scalar-scaled numbers. Keeping
+        # both columns is what lets you show that the isotonic map earned
+        # its place rather than asserting it.
+        if calibrator is not None:
+            lo, hi = calibrator.interval(alpha, mu, sigma)
+            rec_cov = float(((y_true >= lo) & (y_true <= hi)).mean())
+            row["recal_coverage"] = rec_cov
+            row["recal_error"] = round(rec_cov - alpha, 4)
+            row["recal_mean_pi_width"] = round(float(np.mean(hi - lo)), 3)
+
+        # Coverage restricted to windows whose target is a real RUL rather
+        # than the cap. See the docstring — on FD004 this is the difference
+        # between a mean error of 0.142 and 0.036.
+        if max_rul is not None:
+            unc = y_true < max_rul
+            if unc.sum() > 0:
+                in_unc = ((y_true[unc] >= mu[unc] - z*sigma[unc])
+                          & (y_true[unc] <= mu[unc] + z*sigma[unc]))
+                row["uncensored_coverage"] = float(in_unc.mean())
+                row["uncensored_error"] = round(float(in_unc.mean()) - alpha, 4)
+                row["n_uncensored"] = int(unc.sum())
+                if calibrator is not None:
+                    lo_u, hi_u = calibrator.interval(alpha, mu[unc], sigma[unc])
+                    rc = float(((y_true[unc] >= lo_u) & (y_true[unc] <= hi_u)).mean())
+                    row["uncensored_recal_coverage"] = rc
+                    row["uncensored_recal_error"] = round(rc - alpha, 4)
+
+        rows.append(row)
     return pd.DataFrame(rows)
 
 def bucket_metrics( y_true: np.ndarray, y_pred: np.ndarray, mu: np.ndarray, sigma: np.ndarray,
@@ -152,14 +206,55 @@ def bucket_metrics( y_true: np.ndarray, y_pred: np.ndarray, mu: np.ndarray, sigm
         })
     return pd.DataFrame(rows)
 
+# Fallback thresholds, used only when datasets.yaml has no entry.
+# These MUST stay in sync with _DEFAULT_THRESHOLDS in src/inference/predictor.py
+# — the two files previously disagreed, and that was the entire reason FD004
+# reported pct_critical = 0.0 while the dashboard showed 20 critical engines.
+_DEFAULT_THRESHOLDS = {
+    "critical_prob_20": 0.90,
+    "warning_prob_50":  0.75,
+    "monitor_prob_50":  0.50,
+}
+
+
+def load_alert_thresholds(dataset_key: str, datasets_path: Path) -> dict:
+    """
+    Read alert_thresholds for this dataset from config/datasets.yaml.
+
+    This function did not exist before, and its absence was a real bug:
+    alert_tier() had 0.90 / 0.75 / 0.50 hardcoded, so FD004's tuned
+    thresholds (0.60 / 0.65 / 0.40) were honoured by predictor.py — which
+    feeds the dashboard — and silently ignored by the evaluation reports.
+    The two surfaces disagreed about the same fleet.
+    """
+    if not datasets_path.exists():
+        print("  Warning: datasets.yaml not found. Using default alert thresholds.")
+        return _DEFAULT_THRESHOLDS.copy()
+    with open(datasets_path, "r") as f:
+        cfg = yaml.safe_load(f) or {}
+    th = cfg.get(dataset_key, {}).get("alert_thresholds")
+    if not th:
+        print(f"  Warning: no alert_thresholds for {dataset_key}. Using defaults.")
+        return _DEFAULT_THRESHOLDS.copy()
+    return th
+
+
 def alert_tier(
     prob_failure_20: np.ndarray,
     prob_failure_50: np.ndarray,
+    thresholds: dict | None = None,
 ) -> np.ndarray:
+    """
+    Assign alert tiers, most severe last so it wins.
+
+    thresholds defaults to _DEFAULT_THRESHOLDS for backward compatibility,
+    but callers should pass the per-dataset dict from datasets.yaml.
+    """
+    th = thresholds or _DEFAULT_THRESHOLDS
     tiers = np.full(len(prob_failure_20), "NOMINAL", dtype=object)
-    tiers[prob_failure_50 >= 0.50] = "MONITOR"
-    tiers[prob_failure_50 >= 0.75] = "WARNING"
-    tiers[prob_failure_20 >= 0.90] = "CRITICAL"
+    tiers[prob_failure_50 >= th["monitor_prob_50"]]  = "MONITOR"
+    tiers[prob_failure_50 >= th["warning_prob_50"]]  = "WARNING"
+    tiers[prob_failure_20 >= th["critical_prob_20"]] = "CRITICAL"
     return tiers
 
 # SEQUENCE CONSTRUCTION
@@ -337,6 +432,34 @@ def evaluate_dataset(dataset_key: str, registry_path: Path) -> None:
     model, ngb_model, seq_length, sigma_scale = load_pipeline(dataset_key, registry)
     backbone_name = registry[dataset_key]["champion"]["backbone"]
 
+    # Per-dataset alert thresholds (previously hardcoded — see load_alert_thresholds)
+    thresholds = load_alert_thresholds(
+        dataset_key, _ROOT / "config" / "datasets.yaml")
+    print(f"  Alert thresholds: CRITICAL P(RUL<20) >= {thresholds['critical_prob_20']}  "
+          f"WARNING P(RUL<50) >= {thresholds['warning_prob_50']}  "
+          f"MONITOR >= {thresholds['monitor_prob_50']}")
+
+    # Optional distributional recalibrator (src/inference/calibration.py).
+    # Absent -> everything below behaves exactly as before.
+    calibrator = None
+    cal_path = registry[dataset_key]["champion"]["artifacts"].get("cdf_calibrator")
+    if cal_path and Path(cal_path).exists():
+        _INFERENCE = _ROOT / "src" / "inference"
+        if str(_INFERENCE) not in sys.path:
+            sys.path.insert(0, str(_INFERENCE))
+        from calibration import CDFCalibrator
+        calibrator = CDFCalibrator.load(Path(cal_path))
+        print(f"  CDF recalibrator loaded (fitted on {calibrator.n_cal:,} val windows)")
+        if abs(calibrator.sigma_scale - sigma_scale) > 1e-9:
+            print(f"  WARNING: calibrator was fitted at sigma_scale="
+                  f"{calibrator.sigma_scale:.4f} but the registry now says "
+                  f"{sigma_scale:.4f}. Re-run src/inference/calibration.py — "
+                  f"the two corrections are stacking incorrectly.")
+    else:
+        print("  No CDF recalibrator found. Coverage will reflect sigma_scale only.")
+        print("  Fit one with: python src/inference/calibration.py --dataset "
+              f"{dataset_key}")
+
     test_path = _ROOT / "data" / "processed" / dataset_key / "test_features.csv"
     if not test_path.exists():
         raise FileNotFoundError(f"Test features not found: {test_path}")
@@ -354,7 +477,15 @@ def evaluate_dataset(dataset_key: str, registry_path: Path) -> None:
         model, ngb_model, X_all, sigma_scale
     )
     preds_all = mu_all   # NGBoost point prediction == distribution mean
-    tiers_all = alert_tier(prob20_all, prob50_all)
+    # Recalibrate the failure probabilities before they drive alert tiers.
+    # The map is monotone, so auc_failure_20 / auc_failure_50 are unchanged
+    # by construction — only the probability scale moves, which is exactly
+    # what the thresholds are compared against.
+    if calibrator is not None:
+        prob20_all = calibrator.transform_prob(prob20_all)
+        prob50_all = calibrator.transform_prob(prob50_all)
+
+    tiers_all = alert_tier(prob20_all, prob50_all, thresholds)
     z90 = norm.ppf(0.95)
     lower90_all = mu_all  - z90 * sigma_all
     upper90_all = mu_all  + z90 * sigma_all
@@ -394,7 +525,23 @@ def evaluate_dataset(dataset_key: str, registry_path: Path) -> None:
     if auc_20: print(f"  AUC (20-cycle)   : {auc_20:.4f}")
     if auc_50: print(f"  AUC (50-cycle)   : {auc_50:.4f}")
 
-    cal_df = calibration_table(y_all, mu_all, sigma_all)
+    # max_rul comes from datasets.yaml (125 on all four). Needed so the
+    # coverage table can separate censored from uncensored windows.
+    _ds_cfg_path = _ROOT / "config" / "datasets.yaml"
+    _max_rul = None
+    if _ds_cfg_path.exists():
+        with open(_ds_cfg_path, "r") as _f:
+            _max_rul = (yaml.safe_load(_f) or {}).get(dataset_key, {}).get("max_rul")
+
+    cal_df = calibration_table(y_all, mu_all, sigma_all,
+                               calibrator=calibrator, max_rul=_max_rul)
+
+    if _max_rul is not None and "uncensored_coverage" in cal_df.columns:
+        n_cens = int((y_all >= _max_rul).sum())
+        print(f"\n  Censoring: {n_cens:,} / {len(y_all):,} windows "
+              f"({n_cens/len(y_all):.1%}) sit at the RUL cap of {_max_rul:g}.")
+        print("  Coverage is reported both ways; the uncensored column is the")
+        print("  one that reflects the model rather than the cap.")
     print(f"\n  Calibration (post sigma_scale={sigma_scale:.4f}):")
     print(cal_df.to_string(index=False))
 
@@ -410,7 +557,11 @@ def evaluate_dataset(dataset_key: str, registry_path: Path) -> None:
         model, ngb_model, X_last, sigma_scale
     )
     preds_last = mu_last
-    tiers_last = alert_tier(prob20_last, prob50_last)
+    if calibrator is not None:
+        prob20_last = calibrator.transform_prob(prob20_last)
+        prob50_last = calibrator.transform_prob(prob50_last)
+
+    tiers_last = alert_tier(prob20_last, prob50_last, thresholds)
     lower90_last = mu_last - z90 * sigma_last
     upper90_last = mu_last + z90 * sigma_last
     residuals_last = preds_last - y_last
@@ -485,8 +636,26 @@ def evaluate_dataset(dataset_key: str, registry_path: Path) -> None:
             "pct_monitor": float((tiers_last == "MONITOR").mean()),
             "pct_nominal": float((tiers_last == "NOMINAL").mean()),
         },
+        "alert_thresholds": dict(thresholds),
         "calibration": cal_df.set_index("expected_coverage")
                              ["actual_coverage"].to_dict(),
+        "calibration_recalibrated": (
+            cal_df.set_index("expected_coverage")["recal_coverage"].to_dict()
+            if "recal_coverage" in cal_df.columns else None
+        ),
+        "cdf_recalibrated": calibrator is not None,
+        "max_rul": _max_rul,
+        "n_windows_at_rul_cap": (int((y_all >= _max_rul).sum())
+                                 if _max_rul is not None else None),
+        "calibration_uncensored": (
+            cal_df.set_index("expected_coverage")["uncensored_coverage"].to_dict()
+            if "uncensored_coverage" in cal_df.columns else None
+        ),
+        "calibration_uncensored_recalibrated": (
+            cal_df.set_index("expected_coverage")
+                  ["uncensored_recal_coverage"].to_dict()
+            if "uncensored_recal_coverage" in cal_df.columns else None
+        ),
     }
 
     # Save outputs
